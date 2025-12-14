@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Mutex}, time::{Duration, Instant}};
 
-use eframe::egui::{self, CentralPanel, ComboBox, Context, FontFamily, FontId, ScrollArea, TextStyle, TopBottomPanel};
+use eframe::egui::{self, CentralPanel, ComboBox, Context, FontFamily, FontId, RichText, ScrollArea, TextStyle, TopBottomPanel};
 use rusqlite::{Connection, Row};
 use chrono::{DateTime, Utc};
 use aes_gcm::{
@@ -31,21 +31,46 @@ struct App {
     password_input: String,
     description_input: String,
     selected_value: Option<usize>, // Index in Vec
-    cred: Option<Credential>
+    cred: Option<Credential>,
+    show_popup: bool,
+    popup_start_time: Option<Instant>,
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         set_styles(ctx);
         show_top_bar(ctx);
+        println!("Updating");
+        if self.show_popup {
+            println!("Show Popup True");
+            egui::Window::new("Temporary Popup")
+            .collapsible(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("This will disappear soon!").size(20.0));
+                // Add any other elements here
+            });
+            if let Some(start_time) = self.popup_start_time {
+                if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
+                    println!("Setting popups to false");
+                    self.show_popup = false;
+                    self.popup_start_time = None; // Reset timer
+                } else {
+                    println!("Time not up yet");
+                    // Keep requesting repaint until time is up
+                    // ctx.request_repaint_after(Duration::from_millis(100)); // Check more frequently
+                }
+            }
+        }
+
+
         CentralPanel::default().show(ctx, |ui| {
             self.show_account_form(ui);
             self.show_combo_box(ui);
             if let Some(cred) = &self.cred {
                 ui.separator();
-                ui.heading(cred.name.clone());
-                ui.label(cred.description.clone().unwrap_or_default());
-                ui.separator();
+                ui.small(cred.name.clone());
+                ui.small(cred.description.clone().unwrap_or_default());
                 let key = Key::<Aes256Gcm>::from_slice(AES_KEY.as_bytes());
                 let cipher = Aes256Gcm::new(&key);
                 println!("After cipher");
@@ -55,12 +80,11 @@ impl eframe::App for App {
                 match res {
                     Ok(bytes) => {
                         ScrollArea::vertical().show(ui, |ui| {
-                            ui.heading(String::from_utf8(bytes.into()).unwrap());
-                            ui.heading(cred.details.updated_at.clone().to_string());
-                            // for item in cred.details {
-                            //     // Display Account details
-                            //     ui.heading(item.updated_at.unwrap_or("Never Updated"));
-                            // }
+                            ui.small(cred.details.updated_at.clone().to_string());
+                            ui.separator();
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                ui.heading(egui::RichText::new(String::from_utf8(bytes.into()).unwrap()).color(egui::Color32::RED));
+                            });
                         });
                     },
                     Err(e) => println!("{}", e)
@@ -141,15 +165,6 @@ fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<Credential, Box
         println!("->> name: {name}");
         println!("->>  row: {row:?}");
     }
-    
-    // let now: DateTime<Utc> = Utc::now();
-    // let details = CredentialDetails { updated_at: now, created_at: now };
-    // let cred = Credential {
-    //     name: "Wells Fargo".to_string(),
-    //     password: "Blouse".to_string(),
-    //     description: Some("Wells Fargo Website".to_string()),
-    //     details: details,
-    // };
     Ok(final_cred)
 }
 
@@ -244,6 +259,7 @@ struct CredentialInput {
     description: String,
 }
 
+#[derive(Clone)]
 struct Account {
     id: i32,
     name: String
@@ -274,6 +290,12 @@ fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>, ru
 }
 
 impl App {
+    fn show_popup(&mut self) {
+        self.show_popup = true;
+        self.popup_start_time = Some(Instant::now());
+        // Schedule the first check for hiding after 10s
+        // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
+    }
     fn show_account_form(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("New Account", |ui| {
             ui.vertical_centered_justified(|ui| {
@@ -332,14 +354,15 @@ impl App {
                         "Select me"
                     }
             ).show_ui(ui, |ui| {
-                for (i, acc) in self.accounts.iter().enumerate() {
+                for (i, acc) in self.accounts.clone().iter().enumerate() {
                         if ui.selectable_value(
                             &mut self.selected_value, // What it is now
                             Some(i), // What selected value will be when this is clicked
                             &acc.name).clicked() {
-                            if let Some(acc) = self.accounts.get(i) {
+                            if let Some(acc) = self.accounts.clone().get(i) {
                                 // Fetch whatever details to display upon user selection
                                 // get_feed();
+                                self.show_popup(); // Move this somewhere better
                                 match &self.conn {
                                     Some(conn) => {
                                         match get_creds(&conn, &acc.name) {

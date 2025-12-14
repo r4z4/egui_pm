@@ -1,27 +1,17 @@
 use std::{sync::{Arc, Mutex}, time::{Duration, Instant}};
 
 use eframe::egui::{self, CentralPanel, ComboBox, Context, FontFamily, FontId, RichText, ScrollArea, TextStyle, TopBottomPanel};
-use rusqlite::{Connection, Row};
-use chrono::{DateTime, Utc};
+use rusqlite::{Connection};
 use aes_gcm::{
-    Aes256Gcm, Key, Nonce, aead::{Aead, AeadCore, KeyInit, OsRng, generic_array::GenericArray}, aes::cipher::typenum::{UInt, UTerm} // Or `Aes128Gcm`
+    Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit} // Or `Aes128Gcm`
 };
 const DB_PATH: &str = "_pmdb.db";
 const AES_KEY: &str = "CornbreadCornbreadCornbreadCornb"; // 32 chars
-#[derive(Default, Debug)]
-struct CredentialDetails {
-    updated_at: DateTime<Utc>,
-    created_at: DateTime<Utc>,
-}
 
-#[derive(Default, Debug)]
-struct Credential {
-    name: String,
-    password_crypto: Vec<u8>,
-    nonce: Option<Vec<u8>>,
-    description: Option<String>,
-    details: CredentialDetails
-}
+
+mod db_utils;
+mod models;
+use crate::{db_utils::{add_entries, create_db, get_creds, get_current_accounts}, models::{Account, Credential, CredentialDetails, CredentialInput}};
 
 #[derive(Default)]
 struct App {
@@ -41,33 +31,12 @@ impl eframe::App for App {
         set_styles(ctx);
         show_top_bar(ctx);
         println!("Updating");
-        if self.show_popup {
-            println!("Show Popup True");
-            egui::Window::new("Temporary Popup")
-            .collapsible(false)
-            .movable(false)
-            .show(ctx, |ui| {
-                ui.label(RichText::new("This will disappear soon!").size(20.0));
-                // Add any other elements here
-            });
-            if let Some(start_time) = self.popup_start_time {
-                if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
-                    println!("Setting popups to false");
-                    self.show_popup = false;
-                    self.popup_start_time = None; // Reset timer
-                } else {
-                    println!("Time not up yet");
-                    // Keep requesting repaint until time is up
-                    // ctx.request_repaint_after(Duration::from_millis(100)); // Check more frequently
-                }
-            }
-        }
 
 
         CentralPanel::default().show(ctx, |ui| {
             self.show_account_form(ui);
             self.show_combo_box(ui);
-            if let Some(cred) = &self.cred {
+            if let Some(cred) = &self.cred.clone() {
                 ui.separator();
                 ui.small(cred.name.clone());
                 ui.small(cred.description.clone().unwrap_or_default());
@@ -79,6 +48,10 @@ impl eframe::App for App {
                 let res = cipher.decrypt(&nonce, cred.password_crypto.as_ref());
                 match res {
                     Ok(bytes) => {
+                        if self.show_popup {
+                            // println!("Show Popup True");
+                            self.display_popup(ctx, &bytes); 
+                        }
                         ScrollArea::vertical().show(ui, |ui| {
                             ui.small(cred.details.updated_at.clone().to_string());
                             ui.separator();
@@ -90,11 +63,6 @@ impl eframe::App for App {
                     Err(e) => println!("{}", e)
                 }
             }
-            // Debug code to view accounts for now. Clean this up.
-            // for acc in &self.accounts {
-            //     ui.heading(&acc.0); // Name
-            //     ui.heading(&acc.1); // Pwd
-            // }
         });
     }
 }
@@ -149,145 +117,6 @@ fn show_top_bar(ctx: &Context) {
 // }
 // This is the function we'd use above in ComboBox to fire when user selects an option.
 // We will use a DB fetch instead to get Creds from DB (or wherever they are stored)
-fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<Credential, Box<dyn std::error::Error>> {
-    let conn = conn.lock().unwrap();
-    let select_sql = "SELECT id, name, password_crypto, nonce, description, updated_at, created_at
-                    FROM credential
-                    WHERE name = :name";
-    let mut stmt = conn.prepare(select_sql)?;
-    let mut rows = stmt.query(&[(":name", acc)])?;
-
-    let mut final_cred: Credential = Credential::default();
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(1)?;
-        let cred = cred_from_row(row);
-        final_cred = cred;
-        println!("->> name: {name}");
-        println!("->>  row: {row:?}");
-    }
-    Ok(final_cred)
-}
-
-fn cred_from_row(row: &Row) -> Credential {
-    let details = CredentialDetails { 
-        updated_at: row.get(5).expect("Error"), 
-        created_at: row.get(6).expect("Error") 
-    };
-    Credential {
-        name: row.get(1).expect("Error"),
-        password_crypto: row.get(2).expect("Error"),
-        nonce: row.get(3).expect("Error"),
-        description: row.get(4).expect("Error"),
-        details: details
-    }
-}
-
-fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
-    println!("Creating DB");
-    let res = conn.execute(
-        "CREATE TABLE IF NOT EXISTS credential (
-          id INTEGER PRIMARY KEY,
-          name TEXT NOT NULL,
-          password_crypto BLOB,
-          nonce BLOB,
-          description TEXT,
-          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        ) STRICT",
-        (), // Empty list of params
-    );
-    match res {
-        Ok(usize) => println!("{}", usize),
-        Err(e) => println!("{}", e),
-    }
-    Ok(())
-}
-
-fn build_db_credential(input: &CredentialInput) -> Credential {
-    // Transformed from a byte array:
-    println!("Building DB Cred");
-    let key = Key::<Aes256Gcm>::from_slice(AES_KEY.as_bytes());
-    let cipher = Aes256Gcm::new(&key);
-    println!("After cipher");
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
-    let nonce_slice = nonce.as_slice();
-    let now: DateTime<Utc> = Utc::now();
-    dbg!(&now);
-    let details = CredentialDetails {
-        updated_at: now,
-        created_at: now,
-    };
-    dbg!(&details);
-    let ciphertext = cipher.encrypt(&nonce, input.password.as_ref()).unwrap();
-    // let plaintext = cipher.decrypt(&nonce, ciphertext.as_ref()).unwrap();
-    // assert_eq!(&plaintext, b"plaintext message");
-    // let stored = String::from_utf8(ciphertext).expect("Invalid UTF-8");
-    Credential {
-        name: input.name.clone(),
-        password_crypto: ciphertext,
-        nonce: Some(nonce_slice.to_vec()),
-        description: Some(input.description.clone()),
-        details: details
-    }
-}
-
-
-fn add_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput>) -> Result<(), rusqlite::Error> {
-    let now: DateTime<Utc> = Utc::now();
-    let conn = conn.lock().unwrap();
-    for cred in input_vec.iter() {
-        let db_cred = build_db_credential(cred);
-        dbg!(&db_cred);
-        // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
-        let res = conn.execute(
-            "INSERT INTO credential (name, password_crypto, nonce, description, updated_at, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (&db_cred.name, &db_cred.password_crypto, &db_cred.nonce, &db_cred.description, now, now),
-        );
-        match res {
-            Ok (res) => println!("{}", res),
-            Err(e) => println!("{}", e),
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug)]
-struct CredentialInput {
-    name: String,
-    password: String,
-    description: String,
-}
-
-#[derive(Clone)]
-struct Account {
-    id: i32,
-    name: String
-}
-
-fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>, rusqlite::Error> { 
-    let conn = conn.lock().unwrap();
-    let select_sql = "SELECT id, name
-                    FROM credential
-                    ORDER BY name ASC";
-    let mut stmt = conn.prepare(select_sql)?;
-    let rows = stmt.query([]);
-
-    let mut accounts: Vec<Account> = vec!();
-    match rows {
-        Ok(mut rows) => {
-            while let Some(row) = rows.next()? {
-                let account =  Account {id: row.get(0)?, name: row.get(1)?};
-                accounts.push(account);
-            }
-            Ok(accounts)
-        },
-        Err(e) => {
-            println!("Err");
-            Err(e)
-        }
-    }
-}
 
 impl App {
     fn show_popup(&mut self) {
@@ -295,6 +124,30 @@ impl App {
         self.popup_start_time = Some(Instant::now());
         // Schedule the first check for hiding after 10s
         // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
+    }
+    fn display_popup(&mut self, ctx: &Context, bytes: &Vec<u8>) {
+        egui::Window::new("Temporary Popup")
+        .collapsible(false)
+        .movable(false)
+        .show(ctx, |ui| {
+            if let Ok(str) = String::from_utf8(bytes.to_vec()) {
+                ui.label(RichText::new(str).size(20.0));
+            } else {
+                ui.label(RichText::new("Could not parse password").size(20.0));
+            }
+            // Add any other elements here
+        });
+        if let Some(start_time) = self.popup_start_time {
+            if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
+                println!("Setting popups to false");
+                self.show_popup = false;
+                self.popup_start_time = None; // Reset timer
+            } else {
+                println!("Time not up yet");
+                // Keep requesting repaint until time is up
+                // ctx.request_repaint_after(Duration::from_millis(100)); // Check more frequently
+            }
+        }
     }
     fn show_account_form(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("New Account", |ui| {
@@ -378,3 +231,6 @@ impl App {
             });
     }
 }
+
+
+

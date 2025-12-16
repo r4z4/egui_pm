@@ -5,7 +5,7 @@ use rusqlite::{Connection};
 use aes_gcm::{
     Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit} // Or `Aes128Gcm`
 };
-const DB_PATH: &str = "_pmdb.db";
+const DB_PATH: &str = "data/_pmdb.db";
 const AES_KEY: &str = "CornbreadCornbreadCornbreadCornb"; // 32 chars
 
 

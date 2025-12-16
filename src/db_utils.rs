@@ -29,10 +29,10 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 fn build_db_credential(input: &CredentialInput) -> Credential {
     // Transformed from a byte array:
-    println!("Building DB Cred");
+    // println!("Building DB Cred");
     let key = Key::<Aes256Gcm>::from_slice(AES_KEY.as_bytes());
     let cipher = Aes256Gcm::new(&key);
-    println!("After cipher");
+    // println!("After cipher");
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
     let nonce_slice = nonce.as_slice();
     let now: DateTime<Utc> = Utc::now();
@@ -130,4 +130,22 @@ pub fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>
             Err(e)
         }
     }
+}
+
+pub fn create_and_store_backup(conn: Arc<Mutex<Connection>>) {
+    use std::process::Command;
+    let output = Command::new("sqlite3")
+        .arg("_pmdb.db")
+        .arg(".backup 'backup_file.sq3'")
+        .output()
+        .expect("failed to execute process");
+    dbg!(output);
+    // Save to a hidden dir
+    let second = Command::new("mv")
+        .arg("backup_file.sq3")
+        .arg("/.pmdb/backup_file.sq3")
+        .arg("-y")
+        .output()
+        .expect("unable to run command");
+    dbg!(second);
 }

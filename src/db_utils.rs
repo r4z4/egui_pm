@@ -75,6 +75,23 @@ pub fn add_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput
     Ok(())
 }
 
+pub fn get_all_creds(conn: &Arc<Mutex<Connection>>) -> Result<Vec<Credential>, Box<dyn std::error::Error>> {
+    let conn = conn.lock().unwrap();
+    let select_sql = "SELECT id, name, password_crypto, nonce, description, updated_at, created_at
+                    FROM credential
+                    ORDER BY name ASC";
+    let mut stmt = conn.prepare(select_sql)?;
+    let mut rows = stmt.query([])?;
+
+    let mut cred_vec: Vec<Credential> = vec!();
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        let cred = cred_from_row(row);
+        cred_vec.push(cred);
+    }
+    Ok(cred_vec)
+}
+
 pub fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<Credential, Box<dyn std::error::Error>> {
     let conn = conn.lock().unwrap();
     let select_sql = "SELECT id, name, password_crypto, nonce, description, updated_at, created_at
@@ -92,6 +109,18 @@ pub fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<Credential,
         println!("->>  row: {row:?}");
     }
     Ok(final_cred)
+}
+
+pub fn delete_cred(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = conn.lock().unwrap();
+    let select_sql = "DELETE FROM credential
+                    WHERE name = :name";
+    let mut stmt = conn.prepare(select_sql)?;
+    let mut rows = stmt.query([])?;
+
+    // while let Some(row) = rows.next()? {
+    // }
+    Ok(())
 }
 
 fn cred_from_row(row: &Row) -> Credential {

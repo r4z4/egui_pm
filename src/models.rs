@@ -1,14 +1,16 @@
-use chrono::{DateTime, Utc};
+use std::sync::{Arc, Mutex};
 
-// enum Event {
-//     SetPets(Vec),
-//     GetPetImage(egui::Context, PetKind),
-//     SetPetImage(Option),
-//     GetPetFromDB(egui::Context, Arc<Mutex>, i64),
-//     SetSelectedPet(Option),
-//     InsertPetToDB(egui::Context, Arc<Mutex>, Pet),
-//     DeletePetFromDB(egui::Context, Arc<Mutex>, i64),
-// }
+use chrono::{DateTime, Utc};
+use eframe::egui;
+use rusqlite::Connection;
+
+pub enum Event {
+    SetCreds(Vec<Credential>),
+    GetCredFromDB(egui::Context, Arc<Mutex<Connection>>, String),
+    SetSelectedCred(Option<Credential>),
+    InsertCredToDB(egui::Context, Arc<Mutex<Connection>>, CredentialInput),
+    DeleteCredFromDB(egui::Context, Arc<Mutex<Connection>>, String),
+}
 
 #[derive(Debug)]
 pub struct CredentialInput {

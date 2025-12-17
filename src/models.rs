@@ -1,5 +1,15 @@
 use chrono::{DateTime, Utc};
 
+// enum Event {
+//     SetPets(Vec),
+//     GetPetImage(egui::Context, PetKind),
+//     SetPetImage(Option),
+//     GetPetFromDB(egui::Context, Arc<Mutex>, i64),
+//     SetSelectedPet(Option),
+//     InsertPetToDB(egui::Context, Arc<Mutex>, Pet),
+//     DeletePetFromDB(egui::Context, Arc<Mutex>, i64),
+// }
+
 #[derive(Debug)]
 pub struct CredentialInput {
     pub name: String,

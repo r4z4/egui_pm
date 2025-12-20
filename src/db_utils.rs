@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::{io::{Error, ErrorKind}, sync::{Arc, Mutex}};
 
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, aead::{Aead, OsRng}};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Row};
 
-use crate::{AES_KEY, CredentialDetails, models::{Account, Credential, CredentialInput}};
+use crate::{AES_KEY, CredentialDetails, models::{Account, Credential, CredentialInput, User}};
 
 pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
     println!("Creating DB");
@@ -24,6 +24,28 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
         Ok(usize) => println!("{}", usize),
         Err(e) => println!("{}", e),
     }
+    let res = conn.execute(
+        "CREATE TABLE IF NOT EXISTS user (
+          id INTEGER PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          pin TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        ) STRICT",
+        (), // Empty list of params
+    );
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
+    let insert_sql = "INSERT OR IGNORE INTO user (username, pin) 
+                VALUES ('aaron', '1234')";
+    let res = conn.execute(insert_sql, ());
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
+
     Ok(())
 }
 
@@ -55,6 +77,23 @@ fn build_db_credential(input: &CredentialInput) -> Credential {
     }
 }
 
+pub fn save_pin_to_db(conn: &Arc<Mutex<Connection>>, pin: String) -> Result<(), rusqlite::Error> {
+    let now: DateTime<Utc> = Utc::now();
+    let conn = conn.lock().unwrap();
+    let user_id = 1;
+    // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
+    let res = conn.execute(
+        "UPDATE user SET pin = ?1 WHERE id = ?2",
+        (pin, user_id),
+    );
+    match res {
+        Ok (res) => println!("{}", res),
+        Err(e) => println!("{}", e),
+    }
+    
+    Ok(())
+}
+
 pub fn add_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput>) -> Result<(), rusqlite::Error> {
     let now: DateTime<Utc> = Utc::now();
     let conn = conn.lock().unwrap();
@@ -73,6 +112,25 @@ pub fn add_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput
         }
     }
     Ok(())
+}
+
+pub fn get_pin_user(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User, Box<dyn std::error::Error>> {
+    let conn = conn.lock().unwrap();
+    let select_sql = "SELECT id, username, pin FROM user
+                    WHERE id = :user_id LIMIT 1";
+    let mut stmt = conn.prepare(select_sql)?;
+    let mut rows = stmt.query(&[(":user_id", user_id.to_string().as_str())])?;
+    // let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        let user = User {
+            id: row.get(0)?,
+            username: row.get(1)?,
+            pin: row.get(2)?,
+        };
+        Ok(user)
+    } else {
+        Err(Box::new(Error::new(ErrorKind::Other, "No Row")))
+    }
 }
 
 pub fn get_all_creds(conn: &Arc<Mutex<Connection>>) -> Result<Vec<Credential>, Box<dyn std::error::Error>> {
@@ -160,6 +218,50 @@ pub fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>
         }
     }
 }
+
+pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusqlite::Error> { 
+    let conn = conn.lock().unwrap();
+    let select_sql = "SELECT id, username, pin
+                    FROM user
+                    ORDER BY id ASC";
+    let mut stmt = conn.prepare(select_sql)?;
+    let rows = stmt.query([]);
+
+    let mut users: Vec<User> = vec!();
+    match rows {
+        Ok(mut rows) => {
+            while let Some(row) = rows.next()? {
+                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?};
+                users.push(user);
+            }
+            Ok(users)
+        },
+        Err(e) => {
+            println!("Err");
+            Err(e)
+        }
+    }
+}
+
+// pub fn insert_test_user(conn: Arc<Mutex<Connection>>) -> Result<(), rusqlite::Error> { 
+//     let conn = conn.lock().unwrap();
+//     let insert_sql = "INSERT OR IGNORE INTO user (username, pin) 
+//                     VALUES ('aaron', '1234')";
+//     let mut stmt = conn.prepare(insert_sql)?;
+//     let rows = stmt.query([]);
+//
+//     match rows {
+//         Ok(mut _rows) => {
+//             println!("DB Success adding test user");
+//             Ok(())
+//         },
+//         Err(e) => {
+//             println!("Err");
+//             Err(e)
+//         }
+//     }
+// }
+
 
 pub fn create_and_store_backup(conn: Arc<Mutex<Connection>>) {
     use std::process::Command;

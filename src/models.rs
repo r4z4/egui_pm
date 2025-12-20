@@ -19,6 +19,13 @@ pub struct CredentialInput {
     pub description: String,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct User {
+    pub id: i32,
+    pub username: String,
+    pub pin: String,
+}
+
 #[derive(Clone)]
 pub struct Account {
     pub id: i32,

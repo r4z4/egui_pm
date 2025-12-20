@@ -11,10 +11,10 @@ use aes_gcm::{
 };
 use eframe::egui::{
     self, CentralPanel, ComboBox, Context, FontFamily, FontId, RichText, ScrollArea, TextStyle,
-    TopBottomPanel,
+    TopBottomPanel, UiKind,
 };
 use rusqlite::Connection;
-const DB_PATH: &str = "data/_pmdb.db";
+const DB_PATH: &str = "_pmdb.db";
 const AES_KEY: &str = "CornbreadCornbreadCornbreadCornb"; // 32 chars
 
 mod db_utils;
@@ -34,19 +34,26 @@ struct App {
     description_input: String,
     selected_value: Option<usize>, // Index in Vec
     cred: Option<Credential>,
+    // Boolean UI State Fields
+    show_preferences_dialog: bool,
     show_popup: bool,
+    show_edit_dialog: bool,
     popup_start_time: Option<Instant>,
 }
+
+
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         set_styles(ctx);
-        show_top_bar(ctx);
+        self.show_top_bar(ctx);
         println!("Updating");
 
         CentralPanel::default().show(ctx, |ui| {
             self.show_account_form(ui);
+            ui.add_space(20.0);
             self.show_combo_box(ui);
+            self.handle_state_dialogs(ctx);
             if let Some(cred) = &self.cred.clone() {
                 ui.separator();
                 ui.small(cred.name.clone());
@@ -61,18 +68,19 @@ impl eframe::App for App {
                     Ok(bytes) => {
                         if self.show_popup {
                             // println!("Show Popup True");
-                            self.display_popup(ctx, &bytes);
+                            self.display_popup(ctx, &bytes, cred);
                         }
-                        ScrollArea::vertical().show(ui, |ui| {
-                            ui.small(cred.details.updated_at.clone().to_string());
-                            ui.separator();
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                ui.heading(
-                                    egui::RichText::new(String::from_utf8(bytes.into()).unwrap())
-                                        .color(egui::Color32::RED),
-                                );
-                            });
-                        });
+
+                        // ScrollArea::vertical().show(ui, |ui| {
+                        //     ui.small(cred.details.updated_at.clone().to_string());
+                        //     ui.separator();
+                        //     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        //         ui.heading(
+                        //             egui::RichText::new(String::from_utf8(bytes.into()).unwrap())
+                        //                 .color(egui::Color32::RED),
+                        //         );
+                        //     });
+                        // });
                     }
                     Err(e) => println!("{}", e),
                 }
@@ -107,7 +115,7 @@ fn main() -> Result<(), eframe::Error> {
     };
     // eframe::run_native("app_name", options, Box::new(|_cc| Ok(Box::<App>::default())))
     eframe::run_native(
-        "app_name",
+        "Password Manager",
         options,
         Box::new(|_cc| {
             Ok(Box::new(App {
@@ -121,25 +129,13 @@ fn main() -> Result<(), eframe::Error> {
 fn set_styles(ctx: &Context) {
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(30.0, FontFamily::Monospace)),
-        (TextStyle::Button, FontId::new(22.0, FontFamily::Monospace)),
+        (TextStyle::Heading, FontId::new(20.0, FontFamily::Monospace)),
+        (TextStyle::Button, FontId::new(14.0, FontFamily::Monospace)),
         (TextStyle::Body, FontId::new(18.0, FontFamily::Monospace)),
         (TextStyle::Small, FontId::new(14.0, FontFamily::Monospace)),
     ]
     .into();
     ctx.set_style(style);
-}
-
-fn show_top_bar(ctx: &Context) {
-    TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Exit").clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close)
-                }
-            })
-        })
-    });
 }
 
 // Function to make HTTP req to get RSS data from internet
@@ -172,24 +168,83 @@ impl App {
     //         };
     //     }
     // }
+    fn handle_state_dialogs(&mut self, ctx: &Context) {
+    if self.show_edit_dialog {
+        self.edit_dialog(ctx);
+    }
+    if self.show_preferences_dialog {
+        self.preferences_dialog(ctx);
+    }
+}
+    fn show_top_bar(&mut self, ctx: &Context) {
+        TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Edit Credential").clicked() {
+                        self.show_edit_dialog = true;
+                        println!("Set Edit to True");
+                        ui.close_kind(UiKind::Menu)
+                    }
+                    if ui.button("Exit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close)
+                    }
+                });
+                ui.menu_button("Settings", |ui| {
+                    if ui.button("Preferences").clicked() {
+                        self.show_preferences_dialog = true;
+                        ui.close_kind(UiKind::Menu)
+                    }
+                })
+            })
+        });
+    }
+    fn edit_dialog(&mut self, ctx: &Context) {
+        let mut accounts: Vec<Account> = vec![];
+        if let Some(conn) = &self.conn {
+            let res = get_current_accounts(conn.clone());
+            match res {
+                Ok(accts) => accounts = accts,
+                Err(e) => println!("{}", e),
+            }
+        } else {
+            print!("No Conn");
+        }
+        self.accounts = accounts.clone();
+        egui::Window::new("Edit Credential")
+            .collapsible(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Edit Credential").size(14.0));
+                for acct in accounts {
+                    if ui.button(&acct.name).clicked() {
+                        println!("Wanting to edit {}", acct.name);
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    self.show_edit_dialog = false; // Close dialog
+                }
+                // Add any other elements here
+            });
+    }
+    fn preferences_dialog(&mut self, ctx: &Context) {
+        egui::Window::new("Preferences")
+            .collapsible(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Preferences").size(14.0));
+                if ui.button("Cancel").clicked() {
+                    self.show_preferences_dialog = false; // Close dialog
+                }
+            });
+    }
     fn show_popup(&mut self) {
         self.show_popup = true;
         self.popup_start_time = Some(Instant::now());
         // Schedule the first check for hiding after 10s
         // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
     }
-    fn display_popup(&mut self, ctx: &Context, bytes: &Vec<u8>) {
-        egui::Window::new("Temporary Popup")
-            .collapsible(false)
-            .movable(false)
-            .show(ctx, |ui| {
-                if let Ok(str) = String::from_utf8(bytes.to_vec()) {
-                    ui.label(RichText::new(str).size(20.0));
-                } else {
-                    ui.label(RichText::new("Could not parse password").size(20.0));
-                }
-                // Add any other elements here
-            });
+    fn display_popup(&mut self, ctx: &Context, bytes: &Vec<u8>, cred: &Credential) {
+        let mut remaining: Duration = Duration::from_secs(0);
         if let Some(start_time) = self.popup_start_time {
             if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
                 println!("Setting popups to false");
@@ -197,10 +252,25 @@ impl App {
                 self.popup_start_time = None; // Reset timer
             } else {
                 println!("Time not up yet");
+                remaining = Duration::from_secs(10) - Instant::now().duration_since(start_time)
                 // Keep requesting repaint until time is up
                 // ctx.request_repaint_after(Duration::from_millis(100)); // Check more frequently
             }
         }
+        let str = format!("Remaining: {}", remaining.as_secs());
+        egui::Window::new(str)
+            .collapsible(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                if let Ok(str) = String::from_utf8(bytes.to_vec()) {
+                    ui.label(RichText::new(cred.name.clone()).size(20.0));
+                    ui.label(RichText::new(str).size(20.0));
+                } else {
+                    ui.label(RichText::new("Could not parse password").size(20.0));
+                }
+                // Add any other elements here
+            });
+
     }
     fn show_account_form(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("New Account", |ui| {

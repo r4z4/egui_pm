@@ -55,9 +55,9 @@ impl eframe::App for App {
             println!("You are running this program as an admin");
             self.admin_menu(); // No bool for this as it just always shows for now
             if self.show_admin_reset_menu {
-                self.admin_reset_menu();
+                self.admin_setup_menu(ctx);
             } else if self.show_admin_setup_menu {
-                self.admin_setup_menu();
+                self.admin_setup_menu(ctx);
             } else {
                 todo!();
             }
@@ -297,6 +297,19 @@ impl App {
                 }
             });
     }
+
+    // #[cfg(target_os = "windows")]
+    // fn admin_reset_menu(&mut self, ctx: &Context) {
+    //     egui::Window::new("Reset")
+    //         .collapsible(false)
+    //         .movable(false)
+    //         .show(ctx, |ui| {
+    //             ui.label(RichText::new("Preferences").size(14.0));
+    //             if ui.button("Cancel").clicked() {
+    //                 self.show_preferences_dialog = false; // Close dialog
+    //             }
+    //         });
+    // }
 
     #[cfg(target_os = "windows")]
     fn admin_menu(&mut self, ctx: &Context) {

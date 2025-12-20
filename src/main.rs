@@ -58,6 +58,10 @@ impl eframe::App for App {
         CentralPanel::default().show(ctx, |ui| {
             self.show_account_form(ui);
             ui.add_space(20.0);
+            #[cfg(target_os = "windows")]
+            if is_elevated::is_elevated() {
+                ui.small("Running as Admin");
+            };
             // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             //     self.show_combo_box(ui);
             // });

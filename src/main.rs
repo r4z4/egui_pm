@@ -40,8 +40,10 @@ struct App {
     selected_value: Option<usize>, // Index in Vec
     cred: Option<Credential>,
     // Boolean UI State Fields
+    show_admin_setup_menu: bool,
+    show_admin_reset_menu: bool,
     show_preferences_dialog: bool,
-    show_popup: bool,
+    show_credential_popup: bool,
     show_edit_dialog: bool,
     popup_start_time: Option<Instant>,
 }
@@ -50,13 +52,21 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "windows")]
         if is_elevated::is_elevated() {
-            println!("You are running this program as an admin")
+            println!("You are running this program as an admin");
+            self.admin_menu(); // No bool for this as it just always shows for now
+            if self.show_admin_reset_menu {
+                self.admin_reset_menu();
+            } else if self.show_admin_setup_menu {
+                self.admin_setup_menu();
+            } else {
+                todo!();
+            }
         };
         set_styles(ctx);
         self.show_top_bar(ctx);
         println!("Updating");
         CentralPanel::default().show(ctx, |ui| {
-            self.show_account_form(ui);
+            self.account_form(ui);
             ui.add_space(20.0);
             #[cfg(target_os = "windows")]
             if is_elevated::is_elevated() {
@@ -65,7 +75,7 @@ impl eframe::App for App {
             // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             //     self.show_combo_box(ui);
             // });
-            self.show_combo_box(ui);
+            self.combo_box(ui);
             self.handle_state_dialogs(ctx);
             if let Some(cred) = &self.cred.clone() {
                 ui.separator();
@@ -79,9 +89,9 @@ impl eframe::App for App {
                 let res = cipher.decrypt(&nonce, cred.password_crypto.as_ref());
                 match res {
                     Ok(bytes) => {
-                        if self.show_popup {
+                        if self.show_credential_popup {
                             // println!("Show Popup True");
-                            self.display_popup(ctx, &bytes, cred);
+                            self.credential_popup(ctx, &bytes, cred);
                         }
 
                         // ScrollArea::vertical().show(ui, |ui| {
@@ -192,7 +202,7 @@ impl App {
     }
     fn show_popup_timer(&mut self, ctx: &Context, ui: &mut egui::Ui) {
         let str: String = {
-            if self.show_popup {
+            if self.show_credential_popup {
                 if let Some(start_time) = self.popup_start_time {
                     if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
                         "Times up!".to_string()
@@ -274,13 +284,45 @@ impl App {
                 }
             });
     }
-    fn show_popup(&mut self) {
-        self.show_popup = true;
-        self.popup_start_time = Some(Instant::now());
-        // Schedule the first check for hiding after 10s
-        // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
+
+    #[cfg(target_os = "windows")]
+    fn admin_setup_menu(&mut self, ctx: &Context) {
+        egui::Window::new("Set up account PIN")
+            .collapsible(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Preferences").size(14.0));
+                if ui.button("Cancel").clicked() {
+                    self.show_preferences_dialog = false; // Close dialog
+                }
+            });
     }
-    fn display_popup(&mut self, ctx: &Context, bytes: &Vec<u8>, cred: &Credential) {
+
+    #[cfg(target_os = "windows")]
+    fn admin_menu(&mut self, ctx: &Context) {
+        let is_set_up = false;
+        if is_set_up {
+            egui::Window::new("Already set up")
+            .collapsible(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.small("You are already set up to use password manager. If you would like to reset privileges, click reset below.");
+                if ui.button("Reset").clicked() {
+                    self.show_admin_reset_menu = true; // Close dialog
+                }
+            });
+        } else {
+            self.show_admin_setup_menu = true;
+        }
+
+    }
+    // fn show_popup(&mut self) {
+    //     self.show_credential_popup = true;
+    //     self.popup_start_time = Some(Instant::now());
+    //     // Schedule the first check for hiding after 10s
+    //     // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
+    // }
+    fn credential_popup(&mut self, ctx: &Context, bytes: &Vec<u8>, cred: &Credential) {
         egui::Window::new("Temporary Access: 10 seconds")
             .collapsible(false)
             .movable(false)
@@ -296,7 +338,7 @@ impl App {
         if let Some(start_time) = self.popup_start_time {
             if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
                 println!("Setting popups to false");
-                self.show_popup = false;
+                self.show_credential_popup = false;
                 self.popup_start_time = None; // Reset timer
             } else {
                 println!("Time not up yet");
@@ -305,7 +347,7 @@ impl App {
             }
         }
     }
-    fn show_account_form(&mut self, ui: &mut egui::Ui) {
+    fn account_form(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("New Account", |ui| {
             ui.vertical_centered_justified(|ui| {
                 ui.label("Name");
@@ -343,7 +385,7 @@ impl App {
             });
         });
     }
-    fn show_combo_box(&mut self, ui: &mut egui::Ui) {
+    fn combo_box(&mut self, ui: &mut egui::Ui) {
         let mut accounts: Vec<Account> = vec![];
         if let Some(conn) = &self.conn {
             let res = get_current_accounts(conn.clone());
@@ -378,7 +420,8 @@ impl App {
                         if let Some(acc) = self.accounts.clone().get(i) {
                             // Fetch whatever details to display upon user selection
                             // get_feed();
-                            self.show_popup(); // Move this somewhere better
+                            self.show_credential_popup = true;
+                            self.popup_start_time = Some(Instant::now());
                             match &self.conn {
                                 Some(conn) => {
                                     match get_creds(&conn, &acc.name) {

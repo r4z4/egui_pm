@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"] // Tell Windows to run this as a pure GUI app
+
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -10,12 +12,12 @@ use aes_gcm::{
     aead::{Aead, KeyInit}, // Or `Aes128Gcm`
 };
 use eframe::egui::{
-    self, CentralPanel, ComboBox, Context, FontFamily, FontId, RichText, ScrollArea, TextStyle,
-    TopBottomPanel, UiKind,
+    self, Align, CentralPanel, ComboBox, Context, FontFamily, FontId, Layout, RichText, ScrollArea, TextStyle, TopBottomPanel, UiKind
 };
 use rusqlite::Connection;
 const DB_PATH: &str = "_pmdb.db";
 const AES_KEY: &str = "CornbreadCornbreadCornbreadCornb"; // 32 chars
+// const AES_KEY: &str = "20e12765bb97475b88f9aeb426318e44"; // 32 chars
 
 mod db_utils;
 mod models;
@@ -24,6 +26,9 @@ use crate::{
     db_utils::{add_entries, create_db, get_creds, get_current_accounts},
     models::{Account, Credential, CredentialDetails, CredentialInput},
 };
+
+#[cfg(target_os = "windows")]
+use is_elevated::is_elevated;
 
 #[derive(Default)]
 struct App {
@@ -41,23 +46,27 @@ struct App {
     popup_start_time: Option<Instant>,
 }
 
-
-
 impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        if is_elevated::is_elevated() {
+            println!("You are running this program as an admin")
+        };
         set_styles(ctx);
         self.show_top_bar(ctx);
         println!("Updating");
-
         CentralPanel::default().show(ctx, |ui| {
             self.show_account_form(ui);
             ui.add_space(20.0);
+            // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            //     self.show_combo_box(ui);
+            // });
             self.show_combo_box(ui);
             self.handle_state_dialogs(ctx);
             if let Some(cred) = &self.cred.clone() {
                 ui.separator();
-                ui.small(cred.name.clone());
-                ui.small(cred.description.clone().unwrap_or_default());
+                // ui.small(cred.name.clone());
+                // ui.small(cred.description.clone().unwrap_or_default());
                 let key = Key::<Aes256Gcm>::from_slice(AES_KEY.as_bytes());
                 let cipher = Aes256Gcm::new(&key);
                 println!("After cipher");
@@ -84,6 +93,7 @@ impl eframe::App for App {
                     }
                     Err(e) => println!("{}", e),
                 }
+                self.show_popup_timer(ctx, ui);
             }
         });
     }
@@ -169,13 +179,36 @@ impl App {
     //     }
     // }
     fn handle_state_dialogs(&mut self, ctx: &Context) {
-    if self.show_edit_dialog {
-        self.edit_dialog(ctx);
+        if self.show_edit_dialog {
+            self.edit_dialog(ctx);
+        }
+        if self.show_preferences_dialog {
+            self.preferences_dialog(ctx);
+        }
     }
-    if self.show_preferences_dialog {
-        self.preferences_dialog(ctx);
+    fn show_popup_timer(&mut self, ctx: &Context, ui: &mut egui::Ui) {
+        let str: String = {
+            if self.show_popup {
+                if let Some(start_time) = self.popup_start_time {
+                    if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
+                        "Times up!".to_string()
+                    } else {
+                        println!("Time not up yet");
+                        let remaining =
+                            Duration::from_secs(10) - Instant::now().duration_since(start_time);
+                        format!("Remaining: {}", remaining.as_secs())
+                    }
+                } else {
+                    "".to_string()
+                }
+            } else {
+                "".to_string()
+            }
+        };
+        TopBottomPanel::bottom("timer").show(ctx, |ui| {
+            ui.small(str);
+        });
     }
-}
     fn show_top_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -244,21 +277,7 @@ impl App {
         // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
     }
     fn display_popup(&mut self, ctx: &Context, bytes: &Vec<u8>, cred: &Credential) {
-        let mut remaining: Duration = Duration::from_secs(0);
-        if let Some(start_time) = self.popup_start_time {
-            if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
-                println!("Setting popups to false");
-                self.show_popup = false;
-                self.popup_start_time = None; // Reset timer
-            } else {
-                println!("Time not up yet");
-                remaining = Duration::from_secs(10) - Instant::now().duration_since(start_time)
-                // Keep requesting repaint until time is up
-                // ctx.request_repaint_after(Duration::from_millis(100)); // Check more frequently
-            }
-        }
-        let str = format!("Remaining: {}", remaining.as_secs());
-        egui::Window::new(str)
+        egui::Window::new("Temporary Access: 10 seconds")
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
@@ -270,7 +289,17 @@ impl App {
                 }
                 // Add any other elements here
             });
-
+        if let Some(start_time) = self.popup_start_time {
+            if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
+                println!("Setting popups to false");
+                self.show_popup = false;
+                self.popup_start_time = None; // Reset timer
+            } else {
+                println!("Time not up yet");
+                // Keep requesting repaint until time is up
+                // ctx.request_repaint_after(Duration::from_millis(100)); // Check more frequently
+            }
+        }
     }
     fn show_account_form(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("New Account", |ui| {

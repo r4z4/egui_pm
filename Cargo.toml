@@ -8,4 +8,4 @@ aes-gcm = "0.10.3"
 bcrypt = "0.17.1"
 chrono = "0.4.42"
 eframe = "0.33.3"
-rusqlite = { version = "0.37.0", features = ["chrono"] }
+rusqlite = { version = "0.37.0", features = ["chrono", "bundled"] }

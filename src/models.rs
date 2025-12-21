@@ -6,14 +6,15 @@ use rusqlite::Connection;
 
 pub enum Event {
     SetCreds(Vec<Credential>),
-    GetCredFromDB(egui::Context, Arc<Mutex<Connection>>, String),
+    GetCredFromDB(egui::Context, Arc<Mutex<Connection>>, String, i32),
     SetSelectedCred(Option<Credential>),
-    InsertCredToDB(egui::Context, Arc<Mutex<Connection>>, CredentialInput),
-    DeleteCredFromDB(egui::Context, Arc<Mutex<Connection>>, String),
+    InsertCredToDB(egui::Context, Arc<Mutex<Connection>>, CredentialInput, i32),
+    DeleteCredFromDB(egui::Context, Arc<Mutex<Connection>>, String, i32),
 }
 
 #[derive(Debug)]
 pub struct CredentialInput {
+    pub user_id: i32,
     pub name: String,
     pub password: String,
     pub description: String,
@@ -40,6 +41,7 @@ pub struct CredentialDetails {
 
 #[derive(Clone, Default, Debug)]
 pub struct Credential {
+    pub user_id: i32,
     pub name: String,
     pub password_crypto: Vec<u8>,
     pub nonce: Option<Vec<u8>>,

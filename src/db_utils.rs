@@ -1,29 +1,13 @@
-use std::{io::{Error, ErrorKind}, sync::{Arc, Mutex}};
+use std::{env, io::{Error, ErrorKind}, sync::{Arc, Mutex}};
 
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, aead::{Aead, OsRng}};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Row};
 
-use crate::{AES_KEY, CredentialDetails, models::{Account, Credential, CredentialInput, User}};
+use crate::{CredentialDetails, models::{Account, Credential, CredentialInput, User}};
 
 pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
     println!("Creating DB");
-    let res = conn.execute(
-        "CREATE TABLE IF NOT EXISTS credential (
-          id INTEGER PRIMARY KEY,
-          name TEXT NOT NULL,
-          password_crypto BLOB,
-          nonce BLOB,
-          description TEXT,
-          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        ) STRICT",
-        (), // Empty list of params
-    );
-    match res {
-        Ok(usize) => println!("{}", usize),
-        Err(e) => println!("{}", e),
-    }
     let res = conn.execute(
         "CREATE TABLE IF NOT EXISTS user (
           id INTEGER PRIMARY KEY,
@@ -38,6 +22,24 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
         Ok(usize) => println!("{}", usize),
         Err(e) => println!("{}", e),
     }
+    let res = conn.execute(
+        "CREATE TABLE IF NOT EXISTS credential (
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER REFERENCES user(id),
+          name TEXT NOT NULL,
+          password_crypto BLOB,
+          nonce BLOB,
+          description TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        ) STRICT",
+        (), // Empty list of params
+    );
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
+
     let insert_sql = "INSERT OR IGNORE INTO user (username, pin) 
                 VALUES ('aaron', '1234')";
     let res = conn.execute(insert_sql, ());
@@ -52,7 +54,8 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
 fn build_db_credential(input: &CredentialInput) -> Credential {
     // Transformed from a byte array:
     // println!("Building DB Cred");
-    let key = Key::<Aes256Gcm>::from_slice(AES_KEY.as_bytes());
+    let aes_key: &str = &env::var("AES_KEY").expect("AES_KEY must be set in .env file");
+    let key = Key::<Aes256Gcm>::from_slice(aes_key.as_bytes());
     let cipher = Aes256Gcm::new(&key);
     // println!("After cipher");
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
@@ -69,6 +72,7 @@ fn build_db_credential(input: &CredentialInput) -> Credential {
     // assert_eq!(&plaintext, b"plaintext message");
     // let stored = String::from_utf8(ciphertext).expect("Invalid UTF-8");
     Credential {
+        user_id: input.user_id,
         name: input.name.clone(),
         password_crypto: ciphertext,
         nonce: Some(nonce_slice.to_vec()),
@@ -102,9 +106,9 @@ pub fn add_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput
         dbg!(&db_cred);
         // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
         let res = conn.execute(
-            "INSERT INTO credential (name, password_crypto, nonce, description, updated_at, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (&db_cred.name, &db_cred.password_crypto, &db_cred.nonce, &db_cred.description, now, now),
+            "INSERT INTO credential (user_id, name, password_crypto, nonce, description, updated_at, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (&db_cred.user_id, &db_cred.name, &db_cred.password_crypto, &db_cred.nonce, &db_cred.description, now, now),
         );
         match res {
             Ok (res) => println!("{}", res),
@@ -133,13 +137,14 @@ pub fn get_pin_user(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User,
     }
 }
 
-pub fn get_all_creds(conn: &Arc<Mutex<Connection>>) -> Result<Vec<Credential>, Box<dyn std::error::Error>> {
+pub fn get_all_creds(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<Vec<Credential>, Box<dyn std::error::Error>> {
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT id, name, password_crypto, nonce, description, updated_at, created_at
+    let select_sql = "SELECT id, user_id, name, password_crypto, nonce, description, updated_at, created_at
                     FROM credential
+                    WHERE user_id = :user_id
                     ORDER BY name ASC";
     let mut stmt = conn.prepare(select_sql)?;
-    let mut rows = stmt.query([])?;
+    let mut rows = stmt.query(&[(":user_id", user_id.to_string().as_str())])?;
 
     let mut cred_vec: Vec<Credential> = vec!();
     while let Some(row) = rows.next()? {
@@ -150,17 +155,18 @@ pub fn get_all_creds(conn: &Arc<Mutex<Connection>>) -> Result<Vec<Credential>, B
     Ok(cred_vec)
 }
 
-pub fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<Credential, Box<dyn std::error::Error>> {
+pub fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str, user_id: i32) -> Result<Credential, Box<dyn std::error::Error>> {
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT id, name, password_crypto, nonce, description, updated_at, created_at
+    let select_sql = "SELECT id, user_id, name, password_crypto, nonce, description, updated_at, created_at
                     FROM credential
-                    WHERE name = :name";
+                    WHERE user_id = :user_id
+                    AND name = :name";
     let mut stmt = conn.prepare(select_sql)?;
-    let mut rows = stmt.query(&[(":name", acc)])?;
+    let mut rows = stmt.query(&[(":name", acc), (":user_id", user_id.to_string().as_str())])?;
 
     let mut final_cred: Credential = Credential::default();
     while let Some(row) = rows.next()? {
-        let name: String = row.get(1)?;
+        let name: String = row.get(2)?;
         let cred = cred_from_row(row);
         final_cred = cred;
         println!("->> name: {name}");
@@ -183,14 +189,15 @@ pub fn delete_cred(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<(), Box<d
 
 fn cred_from_row(row: &Row) -> Credential {
     let details = CredentialDetails { 
-        updated_at: row.get(5).expect("Error"), 
-        created_at: row.get(6).expect("Error") 
+        updated_at: row.get(6).expect("Error"), 
+        created_at: row.get(7).expect("Error") 
     };
     Credential {
-        name: row.get(1).expect("Error"),
-        password_crypto: row.get(2).expect("Error"),
-        nonce: row.get(3).expect("Error"),
-        description: row.get(4).expect("Error"),
+        user_id: row.get(1).expect("Error"),
+        name: row.get(2).expect("Error"),
+        password_crypto: row.get(3).expect("Error"),
+        nonce: row.get(4).expect("Error"),
+        description: row.get(5).expect("Error"),
         details: details
     }
 }

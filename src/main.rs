@@ -11,23 +11,23 @@ use aes_gcm::{
     Nonce,
     aead::{Aead, KeyInit}, // Or `Aes128Gcm`
 };
-use eframe::egui::{
-    self, Align, CentralPanel, ComboBox, Context, FontFamily, FontId, Layout, RichText, ScrollArea,
-    TextStyle, TopBottomPanel, UiKind,
-};
+use eframe::{egui::{
+    self, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Layout, RichText, ScrollArea, TextStyle, TopBottomPanel, UiKind
+}, epaint};
 use rusqlite::Connection;
 const DB_PATH: &str = "_pmdb.db";
-const AES_KEY: &str = "CornbreadCornbreadCornbreadCornb"; // 32 chars
-// const AES_KEY: &str = "20e12765bb97475b88f9aeb426318e44"; // 32 chars
 
 mod db_utils;
 mod models;
 mod utils;
 use crate::{
-    db_utils::{add_entries, create_db, get_creds, get_current_accounts, get_current_users, get_pin_user},
+    db_utils::{
+        add_entries, create_db, get_creds, get_current_accounts, get_current_users, get_pin_user, save_pin_to_db,
+    },
     models::{Account, Credential, CredentialDetails, CredentialInput, User},
 };
-
+use std::env;
+use dotenvy::dotenv;
 #[cfg(target_os = "windows")]
 use is_elevated::is_elevated;
 
@@ -59,6 +59,18 @@ struct App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "linux")]
+        if is_root::is_root() {
+            println!("You are running this program as an root");
+            self.admin_menu(ctx); // No bool for this as it just always shows for now
+            if self.show_admin_reset_menu {
+                self.admin_setup_menu(ctx);
+            } else if self.show_admin_setup_menu {
+                self.admin_setup_menu(ctx);
+            } else {
+                todo!();
+            }
+        };
         #[cfg(target_os = "windows")]
         if is_elevated::is_elevated() {
             println!("You are running this program as an admin");
@@ -91,7 +103,8 @@ impl eframe::App for App {
                     ui.separator();
                     // ui.small(cred.name.clone());
                     // ui.small(cred.description.clone().unwrap_or_default());
-                    let key = Key::<Aes256Gcm>::from_slice(AES_KEY.as_bytes());
+                    let aes_key: &str = &env::var("AES_KEY").expect("AES_KEY must be set in .env file");
+                    let key = Key::<Aes256Gcm>::from_slice(aes_key.as_bytes());
                     let cipher = Aes256Gcm::new(&key);
                     println!("After cipher");
                     let unwrapped = &cred.nonce.clone().unwrap();
@@ -140,6 +153,7 @@ fn main() -> Result<(), eframe::Error> {
     //         handle_events(event, sender);
     //     }
     // });
+    dotenv().ok();
     let conn = Connection::open(DB_PATH).unwrap();
     let _ = create_db(&conn);
     println!("DB Created");
@@ -298,7 +312,7 @@ impl App {
             });
     }
 
-    #[cfg(target_os = "windows")]
+    // #[cfg(target_os = "windows")]
     fn admin_setup_menu(&mut self, ctx: &Context) {
         egui::Window::new("Set up account PIN")
             .collapsible(false)
@@ -318,7 +332,7 @@ impl App {
                     match &self.conn {
                         Some(conn) => {
                             println!("We have a conn!");
-                            let _ = save_pin_to_db(&conn, self.pin);
+                            let _ = save_pin_to_db(&conn, self.pin.clone());
                         }
                         None => println!("No Conn"),
                     }
@@ -348,7 +362,7 @@ impl App {
     //         });
     // }
 
-    #[cfg(target_os = "windows")]
+    // #[cfg(target_os = "windows")]
     fn admin_menu(&mut self, ctx: &Context) {
         let is_set_up = false;
         if is_set_up {
@@ -365,24 +379,20 @@ impl App {
             self.show_admin_setup_menu = true;
         }
     }
-    // fn show_popup(&mut self) {
-    //     self.show_credential_popup = true;
-    //     self.popup_start_time = Some(Instant::now());
-    //     // Schedule the first check for hiding after 10s
-    //     // self.ctx.request_repaint_after(Duration::from_secs(10)); // (This needs context access)
-    // }
     fn credential_popup(&mut self, ctx: &Context, bytes: &Vec<u8>, cred: &Credential) {
         egui::Window::new("Temporary Access: 10 seconds")
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
                 if let Ok(str) = String::from_utf8(bytes.to_vec()) {
-                    ui.label(RichText::new(cred.name.clone()).size(20.0));
-                    ui.label(RichText::new(str).size(20.0));
+                    ui.label(RichText::new(format!("Username: {}", cred.name.clone())).size(14.0)).on_hover_cursor(egui::CursorIcon::Text);
+                    ui.label(RichText::new(format!("Password: {}", str)).size(14.0)).on_hover_cursor(egui::CursorIcon::Text);
                 } else {
                     ui.label(RichText::new("Could not parse password").size(20.0));
                 }
-                // Add any other elements here
+                if ui.button("Close").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.show_credential_popup = false;
+                }
             });
         if let Some(start_time) = self.popup_start_time {
             if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
@@ -397,93 +407,127 @@ impl App {
         }
     }
     fn auth_screen(&mut self, ctx: &Context, ui: &mut egui::Ui) {
-        if self.show_auth_pin_entry {
-            self.auth_pin_entry(ctx);
-        } else {
-            let mut users: Vec<User> = vec![];
-            if let Some(conn) = &self.conn {
-                let res = get_current_users(conn.clone());
-                match res {
-                    Ok(usrs) => users = usrs,
-                    Err(e) => println!("{}", e),
-                }
-            } else {
-                print!("No Conn");
-            }
-            self.users = users;
-            ComboBox::from_label("Username")
-                .selected_text(if let Some(index) = self.selected_user {
-                    if let Some(usr) = self.users.get(index) {
-                        &usr.username
-                    } else {
-                        "Select One"
-                    }
+        let my_frame = egui::containers::Frame {
+
+            shadow: eframe::epaint::Shadow {
+                offset: [0, 0],
+                blur: 0,
+                spread: 0, 
+                color: Color32::YELLOW,
+            },
+            fill: Color32::LIGHT_BLUE,
+            stroke: egui::Stroke::new(2.0, Color32::GOLD),
+            inner_margin: crate::epaint::Margin {
+                left: 10,
+                right: 10,
+                top: 10,
+                bottom: 10,
+            },
+            corner_radius: egui::CornerRadius {
+                nw: 1,
+                ne: 1,
+                sw: 1,
+                se: 1,
+            },
+            outer_margin: crate::epaint::Margin {
+                left: 10,
+                right: 10,
+                top: 10,
+                bottom: 10,
+            },
+        };
+        egui::CentralPanel::default()
+            .frame(my_frame)
+            .show(ctx, |ui| {
+                if self.show_auth_pin_entry {
+                    self.auth_pin_entry(ctx);
                 } else {
-                    "Select One"
-                })
-                .show_ui(ui, |ui| {
-                    for (i, usr) in self.users.clone().iter().enumerate() {
-                        if ui
-                            .selectable_value(
-                                &mut self.selected_user, // What it is now
-                                Some(i), // What selected value will be when this is clicked
-                                &usr.username,
-                            )
-                            .clicked()
-                        {
-                            println!("Clicked");
-                            if let Some(usr) = self.users.clone().get(i) {
-                                println!("Some User");
-                                self.show_auth_pin_entry = true;
-                                self.login_user_id = Some(usr.id);
-                                // ctx.request_repaint_after(std::time::Duration::from_secs(10));
-                            } else {
-                                println!("No User ?");
-                            }
+                    let mut users: Vec<User> = vec![];
+                    if let Some(conn) = &self.conn {
+                        let res = get_current_users(conn.clone());
+                        match res {
+                            Ok(usrs) => users = usrs,
+                            Err(e) => println!("{}", e),
                         }
+                    } else {
+                        print!("No Conn");
                     }
-                });
-        }
+                    self.users = users;
+                    ui.small("Welcome back. Please select user.");
+                    ComboBox::from_label("Username")
+                        .selected_text(if let Some(index) = self.selected_user {
+                            if let Some(usr) = self.users.get(index) {
+                                &usr.username
+                            } else {
+                                "Select One"
+                            }
+                        } else {
+                            "Select One"
+                        })
+                        .show_ui(ui, |ui| {
+                            for (i, usr) in self.users.clone().iter().enumerate() {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.selected_user, // What it is now
+                                        Some(i), // What selected value will be when this is clicked
+                                        &usr.username,
+                                    )
+                                    .clicked()
+                                {
+                                    println!("Clicked");
+                                    if let Some(usr) = self.users.clone().get(i) {
+                                        println!("Some User");
+                                        self.show_auth_pin_entry = true;
+                                        self.login_user_id = Some(usr.id);
+                                        // ctx.request_repaint_after(std::time::Duration::from_secs(10));
+                                    } else {
+                                        println!("No User ?");
+                                    }
+                                }
+                            }
+                        });
+                }
+            });
     }
     fn auth_pin_entry(&mut self, ctx: &Context) {
         if let Some(login_user_id) = self.login_user_id {
-        egui::Window::new("Enter PIN")
-            .collapsible(false)
-            .movable(false)
-            .show(ctx, |ui| {
-                ui.label(RichText::new("Enter PIN").size(14.0));
-                ui.horizontal(|ui| {
-                    // Limit to 4 characters, only allow digits, single line
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.login_pin)
-                            .char_limit(4)
-                            .hint_text("1234"),
-                    );
-                });
-                if ui.button("Submit").clicked() {
-                    // Check PIN
+            egui::Window::new("Enter PIN")
+                .collapsible(false)
+                .movable(false)
+                .show(ctx, |ui| {
+                    ui.label(RichText::new("Enter PIN").size(14.0));
+                    ui.horizontal(|ui| {
+                        // Limit to 4 characters, only allow digits, single line
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.login_pin)
+                                .char_limit(4)
+                                .hint_text("0000"),
+                        );
+                    });
+                    if ui.button("Submit").clicked() {
+                        // Check PIN
 
-                    match &self.conn {
-                        Some(conn) => {
-                            match get_pin_user(&conn, login_user_id) {
-                                Ok(pin_user) => {
-                                    if self.login_pin == pin_user.pin {
-                                        self.current_user = Some(pin_user);
-                                    } else {
-                                        dbg!(&pin_user.pin);
-                                        dbg!(&self.login_pin);
-                                        println!("Invalid Password");
+                        match &self.conn {
+                            Some(conn) => {
+                                match get_pin_user(&conn, login_user_id) {
+                                    Ok(pin_user) => {
+                                        if self.login_pin == pin_user.pin {
+                                            self.current_user = Some(pin_user);
+                                        } else {
+                                            dbg!(&pin_user.pin);
+                                            dbg!(&self.login_pin);
+                                            println!("Invalid Password");
+                                        }
                                     }
-                                },
-                                Err(e) => println!("{}", e.to_string()),
-                            };
+                                    Err(e) => println!("{}", e.to_string()),
+                                };
+                            }
+                            None => println!("No Conn"),
                         }
-                        None => println!("No Conn"),
-                    }
 
-                    ui.small("You can now use this PIN to access and use Password Manager");
-                }
-            });
+                        ui.small("You can now use this PIN to access and use Password Manager");
+                    }
+                });
         } else {
             println!("No Login User ID");
         }
@@ -499,7 +543,15 @@ impl App {
                 ui.text_edit_singleline(&mut self.description_input);
                 ui.horizontal(|ui| {
                     if ui.button("Submit").clicked() {
+                        let user_id = {
+                            if let Some(current_user) = &self.current_user {
+                                current_user.id
+                            } else {
+                                0
+                            }
+                        };
                         let input_vec = vec![CredentialInput {
+                            user_id: user_id,
                             name: self.name_input.clone(),
                             password: self.password_input.clone(),
                             description: self.description_input.clone(),
@@ -563,9 +615,18 @@ impl App {
                             // get_feed();
                             self.show_credential_popup = true;
                             self.popup_start_time = Some(Instant::now());
+                            let user_id = {
+                                if let Some(current_user) = &self.current_user {
+                                    current_user.id
+                                } else {
+                                    println!("No User Here");
+                                    0
+                                    // panic!("Need to have user here");
+                                }
+                            };
                             match &self.conn {
                                 Some(conn) => {
-                                    match get_creds(&conn, &acc.name) {
+                                    match get_creds(&conn, &acc.name, user_id) {
                                         Ok(cred) => self.cred = Some(cred),
                                         Err(e) => println!("{}", e.to_string()),
                                     };

@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use eframe::egui;
+use eframe::egui::{self, FontFamily};
 use rusqlite::Connection;
+
+use crate::forms::ColorScheme;
 
 pub enum Event {
     SetCreds(Vec<Credential>),
@@ -14,6 +16,7 @@ pub enum Event {
 
 #[derive(Debug)]
 pub struct CredentialInput {
+    pub id: Option<i32>, // Edits
     pub user_id: i32,
     pub name: String,
     pub password: String,
@@ -25,6 +28,20 @@ pub struct User {
     pub id: i32,
     pub username: String,
     pub pin: String,
+    pub preferences: UserPreference,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UserPreferenceInput {
+    pub user_id: i32,
+    pub font_family: FontFamily,
+    pub color_scheme: ColorScheme,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UserPreference {
+    // pub user_id: i32,
+    pub font_family: FontFamily,
 }
 
 #[derive(Clone)]
@@ -41,6 +58,7 @@ pub struct CredentialDetails {
 
 #[derive(Clone, Default, Debug)]
 pub struct Credential {
+    pub id: Option<i32>, // Edits
     pub user_id: i32,
     pub name: String,
     pub password_crypto: Vec<u8>,

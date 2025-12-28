@@ -2,10 +2,12 @@ use std::{env, io::{Error, ErrorKind}, sync::{Arc, Mutex}};
 
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, aead::{Aead, OsRng}};
 use chrono::{DateTime, Utc};
+use eframe::egui::FontFamily;
 use rusqlite::{Connection, Row};
 
-use crate::{CredentialDetails, models::{Account, Credential, CredentialInput, User}};
+use crate::{CredentialDetails, models::{Account, Credential, CredentialInput, User, UserPreference, UserPreferenceInput}};
 
+// TODO = Create init script
 pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
     println!("Creating DB");
     let res = conn.execute(
@@ -13,6 +15,39 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
           id INTEGER PRIMARY KEY,
           username TEXT NOT NULL UNIQUE,
           pin TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        ) STRICT",
+        (), // Empty list of params
+    );
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
+    let res = conn.execute(
+        "CREATE TABLE IF NOT EXISTS color_scheme (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL
+        ) STRICT",
+        (), // Empty list of params
+    );
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
+    let insert_sql = "INSERT OR IGNORE INTO color_scheme (name) 
+                VALUES ('light'), ('dark')";
+    let res = conn.execute(insert_sql, ());
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
+    let res = conn.execute(
+        "CREATE TABLE IF NOT EXISTS user_setting (
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER REFERENCES user(id) UNIQUE,
+          font_family TEXT NOT NULL DEFAULT 'monospace',
+          color_scheme_id INTEGER REFERENCES color_scheme(id) NOT NULL DEFAULT 1, -- Light
           updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP
         ) STRICT",
@@ -47,6 +82,13 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
         Ok(usize) => println!("{}", usize),
         Err(e) => println!("{}", e),
     }
+    let insert_sql = "INSERT OR IGNORE INTO user_setting (user_id, font_family) 
+                VALUES (1, 'proportional')";
+    let res = conn.execute(insert_sql, ());
+    match res {
+        Ok(usize) => println!("{}", usize),
+        Err(e) => println!("{}", e),
+    }
 
     Ok(())
 }
@@ -72,6 +114,7 @@ fn build_db_credential(input: &CredentialInput) -> Credential {
     // assert_eq!(&plaintext, b"plaintext message");
     // let stored = String::from_utf8(ciphertext).expect("Invalid UTF-8");
     Credential {
+        id: input.id,
         user_id: input.user_id,
         name: input.name.clone(),
         password_crypto: ciphertext,
@@ -118,6 +161,57 @@ pub fn add_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput
     Ok(())
 }
 
+// These are only really ever used for singular records, but making them take vecs just because
+pub fn update_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialInput>) -> Result<(), rusqlite::Error> {
+    let now: DateTime<Utc> = Utc::now();
+    let conn = conn.lock().unwrap();
+    for cred in input_vec.iter() {
+        let db_cred = build_db_credential(cred);
+        dbg!(&db_cred);
+        // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
+        let res = conn.execute(
+            "UPDATE credential SET name = ?1, password_crypto = ?2, description = ?3, updated_at = ?4
+            WHERE id = ?5",
+            (&db_cred.name, &db_cred.password_crypto, &db_cred.description, now, &db_cred.id),
+        );
+        match res {
+            Ok (res) => println!("{}", res),
+            Err(e) => println!("{}", e),
+        }
+    }
+    Ok(())
+}
+
+fn map_font_family(ff: &FontFamily) -> &'static str {
+    match ff {
+        FontFamily::Monospace => "monospace",
+        FontFamily::Proportional => "proportional",
+        _ => "monospace",
+    }
+}
+
+pub fn update_user_preferences(conn: &Arc<Mutex<Connection>>, input_vec: Vec<UserPreferenceInput>) -> Result<(), rusqlite::Error> {
+    let now: DateTime<Utc> = Utc::now();
+    let conn = conn.lock().unwrap();
+    for input in input_vec.iter() {
+        // let input = build_db_credential(cred);
+        dbg!(&input);
+        let font_family_input = map_font_family(&input.font_family);
+        // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
+        let res = conn.execute(
+            "UPDATE user_setting 
+             SET font_family = ?1, updated_at = ?2 
+             WHERE user_id = ?3",
+            (font_family_input, now, &input.user_id),
+        );
+        match res {
+            Ok (res) => println!("{}", res),
+            Err(e) => println!("{}", e),
+        }
+    }
+    Ok(())
+}
+
 pub fn get_pin_user(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User, Box<dyn std::error::Error>> {
     let conn = conn.lock().unwrap();
     let select_sql = "SELECT id, username, pin FROM user
@@ -130,6 +224,7 @@ pub fn get_pin_user(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User,
             id: row.get(0)?,
             username: row.get(1)?,
             pin: row.get(2)?,
+            preferences: UserPreference::default(),
         };
         Ok(user)
     } else {
@@ -193,6 +288,7 @@ fn cred_from_row(row: &Row) -> Credential {
         created_at: row.get(7).expect("Error") 
     };
     Credential {
+        id: row.get(0).expect("Error"),
         user_id: row.get(1).expect("Error"),
         name: row.get(2).expect("Error"),
         password_crypto: row.get(3).expect("Error"),
@@ -228,9 +324,10 @@ pub fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>
 
 pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusqlite::Error> { 
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT id, username, pin
+    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family
                     FROM user
-                    ORDER BY id ASC";
+                    INNER JOIN user_setting ON user_setting.user_id = user.id
+                    ORDER BY user.id ASC";
     let mut stmt = conn.prepare(select_sql)?;
     let rows = stmt.query([]);
 
@@ -238,7 +335,7 @@ pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusq
     match rows {
         Ok(mut rows) => {
             while let Some(row) = rows.next()? {
-                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?};
+                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?, preferences: build_user_preference(row.get(3)?)};
                 users.push(user);
             }
             Ok(users)
@@ -248,6 +345,10 @@ pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusq
             Err(e)
         }
     }
+}
+
+fn build_user_preference(db_name: String) -> UserPreference {
+    UserPreference {font_family: get_font_family(&db_name)}
 }
 
 // pub fn insert_test_user(conn: Arc<Mutex<Connection>>) -> Result<(), rusqlite::Error> { 
@@ -269,6 +370,13 @@ pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusq
 //     }
 // }
 
+fn get_font_family(db_name: &str) -> FontFamily {
+    match db_name {
+        "monospace" => FontFamily::Monospace,
+        "proportional" => FontFamily::Proportional,
+        _ => FontFamily::Monospace,
+    }
+}
 
 pub fn create_and_store_backup(conn: Arc<Mutex<Connection>>) {
     use std::process::Command;

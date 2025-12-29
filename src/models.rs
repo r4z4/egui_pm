@@ -42,6 +42,7 @@ pub struct UserPreferenceInput {
 pub struct UserPreference {
     // pub user_id: i32,
     pub font_family: FontFamily,
+    pub color_scheme: ColorScheme,
 }
 
 #[derive(Clone)]

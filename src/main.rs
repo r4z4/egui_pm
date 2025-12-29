@@ -1,9 +1,7 @@
 #![windows_subsystem = "windows"] // Tell Windows to run this as a pure GUI app
 
 use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    fs::OpenOptions, sync::{Arc, Mutex}, time::{Duration, Instant}
 };
 
 use aes_gcm::{
@@ -12,6 +10,7 @@ use aes_gcm::{
     Nonce,
     aead::{Aead, KeyInit}, // Or `Aes128Gcm`
 };
+use catppuccin_egui::Theme;
 use eframe::{
     egui::{
         self, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, RichText, TextStyle,
@@ -28,9 +27,9 @@ mod models;
 mod utils;
 use crate::{
     db_utils::{
-        create_db, get_creds, get_current_accounts, get_current_users, get_pin_user, save_pin_to_db,
+        create_db, get_creds, get_current_accounts, get_current_users, save_pin_to_db, user_from_id,
     },
-    forms::{AccountForm, PreferencesForm},
+    forms::{AccountForm, ColorScheme, PreferencesForm},
     models::{Account, Credential, CredentialDetails, User},
 };
 use dotenvy::dotenv;
@@ -125,11 +124,11 @@ impl eframe::App for App {
                 todo!();
             }
         };
-        set_styles(ctx);
+        set_styles(ctx, self.current_user.clone());
         self.show_top_bar(ctx);
         println!("Updating");
         CentralPanel::default().show(ctx, |ui| {
-            if let Some(current_user) = &self.current_user {
+            if let Some(_current_user) = &self.current_user {
                 App::account_form(self, ui, None);
                 ui.add_space(20.0);
                 #[cfg(target_os = "windows")]
@@ -197,9 +196,29 @@ fn main() -> Result<(), eframe::Error> {
     //     }
     // });
     dotenv().ok();
-    let conn = Connection::open(DB_PATH).unwrap();
+    // let conn = Connection::open(DB_PATH).unwrap();
+    let data_dir = "data";
+    let db_path = format!("{}/_pmdb.db", data_dir);
+
+    // Create the data directory if it doesn't exist
+    std::fs::create_dir_all(data_dir).expect("Failed to create data directory");
+
+    let open_options = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&db_path);
+    let _res = match open_options {
+        Ok(_path) => {
+
+            println!("DB Created");
+        }
+        Err(e) => {
+            eprintln!("Error opening database: {}", e);
+        }
+    };
+    let conn = Connection::open(db_path).unwrap();
     let _ = create_db(&conn);
-    println!("DB Created");
     // This results in an error: `Trying to write to read_only DB`
     // TODO: find out how to init in different directory
     // Make DB file hidden. On UNIX, dotfiles already hidden, Windows need to set attribute.
@@ -229,16 +248,41 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
-fn set_styles(ctx: &Context) {
+fn get_theme(cs: ColorScheme) -> Theme {
+    dbg!(&cs);
+    match cs {
+        ColorScheme::Light => catppuccin_egui::LATTE,
+        ColorScheme::Dark => catppuccin_egui::MOCHA,
+        _ => catppuccin_egui::FRAPPE,
+    }
+}
+
+fn set_styles(ctx: &Context, current_user: Option<User>) {
+    dbg!(&current_user);
+    let font_family = {
+        if let Some(user) = &current_user {
+            user.preferences.font_family.clone()
+        } else {
+            FontFamily::Monospace
+        }
+    };
+    let theme = {
+        if let Some(user) = current_user {
+            get_theme(user.preferences.color_scheme)
+        } else {
+            catppuccin_egui::LATTE
+        }
+    };
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(20.0, FontFamily::Monospace)),
-        (TextStyle::Button, FontId::new(14.0, FontFamily::Monospace)),
-        (TextStyle::Body, FontId::new(18.0, FontFamily::Monospace)),
-        (TextStyle::Small, FontId::new(14.0, FontFamily::Monospace)),
+        (TextStyle::Heading, FontId::new(20.0, font_family.clone())),
+        (TextStyle::Button, FontId::new(14.0, font_family.clone())),
+        (TextStyle::Body, FontId::new(18.0, font_family.clone())),
+        (TextStyle::Small, FontId::new(14.0, font_family.clone())),
     ]
     .into();
     ctx.set_style(style);
+    catppuccin_egui::set_theme(&ctx, theme);
 }
 
 // Function to make HTTP req to get RSS data from internet
@@ -279,7 +323,7 @@ impl App {
             self.preferences_dialog(ctx);
         }
     }
-    fn show_popup_timer(&mut self, ctx: &Context, ui: &mut egui::Ui) {
+    fn show_popup_timer(&mut self, ctx: &Context, _ui: &mut egui::Ui) {
         let str: String = {
             if self.app_displays.show_credential_popup {
                 if let Some(start_time) = self.app_displays.popup_start_time {
@@ -495,7 +539,7 @@ impl App {
             }
         }
     }
-    fn auth_screen(&mut self, ctx: &Context, ui: &mut egui::Ui) {
+    fn auth_screen(&mut self, ctx: &Context, _ui: &mut egui::Ui) {
         let my_frame = egui::containers::Frame {
             shadow: eframe::epaint::Shadow {
                 offset: [0, 0],
@@ -600,7 +644,7 @@ impl App {
 
                             match &self.conn {
                                 Some(conn) => {
-                                    match get_pin_user(&conn, login_user_id) {
+                                    match user_from_id(&conn, login_user_id) {
                                         Ok(pin_user) => {
                                             if self.login_pin == pin_user.pin {
                                                 self.current_user = Some(pin_user);

@@ -1,7 +1,7 @@
 use eframe::egui::{self, FontFamily, Label};
 
 use crate::{
-    App, db_utils::{add_entries, update_entries, update_user_preferences}, decrypt, models::{Account, Credential, CredentialInput, UserPreferenceInput}
+    App, db_utils::{add_entries, update_entries, update_user_preferences, user_from_id}, decrypt, models::{Account, Credential, CredentialInput, UserPreferenceInput}
 };
 
 #[derive(Default)]
@@ -21,7 +21,7 @@ pub struct AccountForm {
     // font_family: String
 }
 
-#[derive(PartialEq, Clone, Debug, Default)]
+#[derive(PartialEq, Clone, Debug, Default, Hash, Eq)]
 pub enum ColorScheme {
     #[default]
     Light,
@@ -144,7 +144,7 @@ impl App {
                     ))
                     .clicked()
                 {
-                    println!("Mono");
+                    println!("Light");
                     self.forms.preferences_form.in_edit = true;
                     self.forms.preferences_form.color_scheme = ColorScheme::Light
                 }
@@ -155,7 +155,7 @@ impl App {
                     ))
                     .clicked()
                 {
-                    println!("Proportional");
+                    println!("Dark");
                     self.forms.preferences_form.in_edit = true;
                     self.forms.preferences_form.color_scheme = ColorScheme::Dark
                 }
@@ -183,7 +183,16 @@ impl App {
                     match &self.conn {
                         Some(conn) => {
                             println!("We have a conn!");
-                            let _ = update_user_preferences(&conn, input_vec);
+                            let _ = update_user_preferences(&conn, input_vec.clone());
+                            // Refetch and resave current user with new, updated info
+                            match user_from_id(&conn, input_vec[0].user_id) {
+                                Ok(user) => self.current_user = Some(user),
+                                Err(e) => {
+                                    println!("Error getting User: {}", e);
+                                    self.current_user = None;
+                                }
+    
+                            }
                             // self.accounts.push((self.name_input.clone(), self.password_input.clone()));
                             // self.name_input.clear();
                         }

@@ -1,11 +1,11 @@
-use std::{env, io::{Error, ErrorKind}, sync::{Arc, Mutex}};
+use std::{collections::HashMap, env, io::{Error, ErrorKind}, sync::{Arc, Mutex}};
 
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, aead::{Aead, OsRng}};
 use chrono::{DateTime, Utc};
 use eframe::egui::FontFamily;
 use rusqlite::{Connection, Row};
 
-use crate::{CredentialDetails, models::{Account, Credential, CredentialInput, User, UserPreference, UserPreferenceInput}};
+use crate::{CredentialDetails, forms::ColorScheme, models::{Account, Credential, CredentialInput, User, UserPreference, UserPreferenceInput}};
 
 // TODO = Create init script
 pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -36,7 +36,7 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
         Err(e) => println!("{}", e),
     }
     let insert_sql = "INSERT OR IGNORE INTO color_scheme (name) 
-                VALUES ('light'), ('dark')";
+                VALUES ('latte'), ('mocha'), ('macchiato'), ('frappe')";
     let res = conn.execute(insert_sql, ());
     match res {
         Ok(usize) => println!("{}", usize),
@@ -190,6 +190,24 @@ fn map_font_family(ff: &FontFamily) -> &'static str {
     }
 }
 
+fn map_color_scheme(cs: &ColorScheme) -> i32 {
+    match cs {
+        ColorScheme::Light => 1,
+        ColorScheme::Dark => 2,
+        _ => 1,
+    }
+}
+
+fn find_key_for_value<T: PartialEq>(map: &HashMap<i32, T>, value: T) -> Option<&i32> {
+    map.iter()
+        .find_map(|(key, val)| if *val == value { Some(key) } else { None })
+}
+
+fn find_key_for_value_str<T: PartialEq>(map: &HashMap<String, T>, value: T) -> Option<&String> {
+    map.iter()
+        .find_map(|(key, val)| if *val == value { Some(key) } else { None })
+}
+
 pub fn update_user_preferences(conn: &Arc<Mutex<Connection>>, input_vec: Vec<UserPreferenceInput>) -> Result<(), rusqlite::Error> {
     let now: DateTime<Utc> = Utc::now();
     let conn = conn.lock().unwrap();
@@ -197,12 +215,14 @@ pub fn update_user_preferences(conn: &Arc<Mutex<Connection>>, input_vec: Vec<Use
         // let input = build_db_credential(cred);
         dbg!(&input);
         let font_family_input = map_font_family(&input.font_family);
+        let color_scheme_id = map_color_scheme(&input.color_scheme);
+        println!("Updating Color Scheme to {}", &color_scheme_id);
         // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
         let res = conn.execute(
             "UPDATE user_setting 
-             SET font_family = ?1, updated_at = ?2 
-             WHERE user_id = ?3",
-            (font_family_input, now, &input.user_id),
+             SET font_family = ?1, color_scheme_id = ?2, updated_at = ?3 
+             WHERE user_id = ?4",
+            (font_family_input, color_scheme_id, now, &input.user_id),
         );
         match res {
             Ok (res) => println!("{}", res),
@@ -212,10 +232,12 @@ pub fn update_user_preferences(conn: &Arc<Mutex<Connection>>, input_vec: Vec<Use
     Ok(())
 }
 
-pub fn get_pin_user(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User, Box<dyn std::error::Error>> {
+pub fn user_from_id(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User, Box<dyn std::error::Error>> {
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT id, username, pin FROM user
-                    WHERE id = :user_id LIMIT 1";
+    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family, user_setting.color_scheme_id 
+                    FROM user
+                    INNER JOIN user_setting ON user_setting.user_id = user.id
+                    WHERE user.id = :user_id LIMIT 1";
     let mut stmt = conn.prepare(select_sql)?;
     let mut rows = stmt.query(&[(":user_id", user_id.to_string().as_str())])?;
     // let mut rows = stmt.query([])?;
@@ -224,7 +246,7 @@ pub fn get_pin_user(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User,
             id: row.get(0)?,
             username: row.get(1)?,
             pin: row.get(2)?,
-            preferences: UserPreference::default(),
+            preferences: build_user_preference(row.get(3)?, row.get(4)?),
         };
         Ok(user)
     } else {
@@ -324,7 +346,7 @@ pub fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>
 
 pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusqlite::Error> { 
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family
+    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family, user_setting.color_scheme_id
                     FROM user
                     INNER JOIN user_setting ON user_setting.user_id = user.id
                     ORDER BY user.id ASC";
@@ -335,7 +357,8 @@ pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusq
     match rows {
         Ok(mut rows) => {
             while let Some(row) = rows.next()? {
-                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?, preferences: build_user_preference(row.get(3)?)};
+                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?, preferences: build_user_preference(row.get(3)?, row.get(4)?)};
+                dbg!(&user);
                 users.push(user);
             }
             Ok(users)
@@ -347,8 +370,20 @@ pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusq
     }
 }
 
-fn build_user_preference(db_name: String) -> UserPreference {
-    UserPreference {font_family: get_font_family(&db_name)}
+fn get_color_scheme(id: i32) -> ColorScheme {
+    match id {
+        1 => ColorScheme::Light,
+        2 => ColorScheme::Dark,
+        _ => ColorScheme::Light,
+    }
+}
+
+fn build_user_preference(db_name: String, color_scheme_id: i32) -> UserPreference {
+    dbg!(&color_scheme_id);
+    let up = UserPreference {font_family: get_font_family(&db_name), color_scheme: get_color_scheme(color_scheme_id)};
+    println!("BUILDING UP");
+    dbg!(&up);
+    up
 }
 
 // pub fn insert_test_user(conn: Arc<Mutex<Connection>>) -> Result<(), rusqlite::Error> { 

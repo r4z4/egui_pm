@@ -130,47 +130,28 @@ impl eframe::App for App {
         CentralPanel::default().show(ctx, |ui| {
             if let Some(_current_user) = &self.current_user {
                 App::account_form(self, ui, None);
-                ui.add_space(20.0);
+                ui.add_space(5.0);
+                ui.separator();
+                ui.add_space(5.0);
+                
                 #[cfg(target_os = "windows")]
                 if is_elevated::is_elevated() {
                     ui.small("Running as Admin");
                 };
+                
                 // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 //     self.show_combo_box(ui);
                 // });
+                
                 self.combo_box(ui);
                 self.handle_state_dialogs(ctx);
                 if let Some(cred) = &self.cred.clone() {
                     ui.separator();
+                    let pw_str = decrypt(cred);
                     // ui.small(cred.name.clone());
                     // ui.small(cred.description.clone().unwrap_or_default());
-                    let aes_key: &str =
-                        &env::var("AES_KEY").expect("AES_KEY must be set in .env file");
-                    let key = Key::<Aes256Gcm>::from_slice(aes_key.as_bytes());
-                    let cipher = Aes256Gcm::new(&key);
-                    println!("After cipher");
-                    let unwrapped = &cred.nonce.clone().unwrap();
-                    let nonce = Nonce::from_slice(&unwrapped);
-                    let res = cipher.decrypt(&nonce, cred.password_crypto.as_ref());
-                    match res {
-                        Ok(bytes) => {
-                            if self.app_displays.show_credential_popup {
-                                // println!("Show Popup True");
-                                self.credential_popup(ctx, &bytes, cred);
-                            }
-
-                            // ScrollArea::vertical().show(ui, |ui| {
-                            //     ui.small(cred.details.updated_at.clone().to_string());
-                            //     ui.separator();
-                            //     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                            //         ui.heading(
-                            //             egui::RichText::new(String::from_utf8(bytes.into()).unwrap())
-                            //                 .color(egui::Color32::RED),
-                            //         );
-                            //     });
-                            // });
-                        }
-                        Err(e) => println!("{}", e),
+                    if self.app_displays.show_credential_popup {
+                        self.credential_popup(ctx, pw_str, cred);
                     }
                     self.show_popup_timer(ctx, ui);
                 }
@@ -350,7 +331,7 @@ impl App {
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Edit Credential").clicked() {
+                    if ui.add_enabled(self.current_user.is_some(), egui::Button::new("Edit Credential")).clicked() {
                         self.app_displays.show_edit_dialog = true;
                         println!("Set Edit to True");
                         ui.close_kind(UiKind::Menu)
@@ -360,7 +341,7 @@ impl App {
                     }
                 });
                 ui.menu_button("Settings", |ui| {
-                    if ui.button("Preferences").clicked() {
+                    if ui.add_enabled(self.current_user.is_some(), egui::Button::new("Preferences")).clicked() {
                         self.app_displays.show_preferences_dialog = true;
                         ui.close_kind(UiKind::Menu)
                     }
@@ -506,19 +487,15 @@ impl App {
             self.app_displays.show_admin_setup_menu = true;
         }
     }
-    fn credential_popup(&mut self, ctx: &Context, bytes: &Vec<u8>, cred: &Credential) {
+    fn credential_popup(&mut self, ctx: &Context, pw_str: String, cred: &Credential) {
         egui::Window::new("Temporary Access: 10 seconds")
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
-                if let Ok(str) = String::from_utf8(bytes.to_vec()) {
-                    ui.label(RichText::new(format!("Username: {}", cred.name.clone())).size(14.0))
-                        .on_hover_cursor(egui::CursorIcon::Text);
-                    ui.label(RichText::new(format!("Password: {}", str)).size(14.0))
-                        .on_hover_cursor(egui::CursorIcon::Text);
-                } else {
-                    ui.label(RichText::new("Could not parse password").size(20.0));
-                }
+                ui.label(RichText::new(format!("Username: {}", cred.name.clone())).size(14.0))
+                    .on_hover_cursor(egui::CursorIcon::Text);
+                ui.label(RichText::new(format!("Password: {}", pw_str)).size(14.0))
+                    .on_hover_cursor(egui::CursorIcon::Text);
                 if ui
                     .button("Close")
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -545,10 +522,10 @@ impl App {
                 offset: [0, 0],
                 blur: 0,
                 spread: 0,
-                color: Color32::YELLOW,
+                color: Color32::BLACK,
             },
             fill: Color32::LIGHT_BLUE,
-            stroke: egui::Stroke::new(2.0, Color32::GOLD),
+            stroke: egui::Stroke::new(2.0, Color32::BLACK),
             inner_margin: crate::epaint::Margin {
                 left: 10,
                 right: 10,

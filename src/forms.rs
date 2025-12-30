@@ -40,12 +40,18 @@ impl App {
         }
         ui.collapsing(heading, |ui| {
             ui.vertical_centered_justified(|ui| {
-                ui.label("Name");
-                ui.text_edit_singleline(&mut self.forms.account_form.name);
-                ui.label("Password");
-                ui.text_edit_singleline(&mut self.forms.account_form.password);
-                ui.label("Description");
-                ui.text_edit_singleline(&mut self.forms.account_form.description);
+                egui::Grid::new("form_grid").num_columns(2).spacing([8.0, 12.0]).show(ui, |ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.forms.account_form.name);
+                    ui.end_row();
+                    ui.label("Password");
+                    ui.text_edit_singleline(&mut self.forms.account_form.password);
+                    ui.end_row();
+                    ui.label("Description");
+                    ui.text_edit_singleline(&mut self.forms.account_form.description);
+                    ui.end_row();
+                });
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui.button("Submit").clicked() {
                         let user_id = {
@@ -103,63 +109,67 @@ impl App {
             // ui.radio_value(&mut my_enum, Enum::First, "First");
             // ui.checkbox(&mut self.is_checked, "Option Enabled");
             // Font Family
-            ui.add(Label::new("Font Family"));
             ui.horizontal(|ui| {
-                // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
-                // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.font_family == FontFamily::Monospace,
-                        "Monospace",
-                    ))
-                    .clicked()
-                {
-                    println!("Mono");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.font_family = FontFamily::Monospace
-                }
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.font_family == FontFamily::Proportional,
-                        "Proportional",
-                    ))
-                    .clicked()
-                {
-                    println!("Proportional");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.font_family = FontFamily::Proportional
-                }
-                // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
+                ui.add(Label::new("Font Family"));
+                ui.horizontal(|ui| {
+                    // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
+                    // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.font_family == FontFamily::Monospace,
+                            "Monospace",
+                        ))
+                        .clicked()
+                    {
+                        println!("Mono");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.font_family = FontFamily::Monospace
+                    }
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.font_family == FontFamily::Proportional,
+                            "Proportional",
+                        ))
+                        .clicked()
+                    {
+                        println!("Proportional");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.font_family = FontFamily::Proportional
+                    }
+                    // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
+                });
             });
             ui.end_row();
             // Color
-            ui.add(Label::new("Color Scheme"));
             ui.horizontal(|ui| {
-                // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
-                // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.color_scheme == ColorScheme::Light,
-                        "Light",
-                    ))
-                    .clicked()
-                {
-                    println!("Light");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.color_scheme = ColorScheme::Light
-                }
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.color_scheme == ColorScheme::Dark,
-                        "Dark",
-                    ))
-                    .clicked()
-                {
-                    println!("Dark");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.color_scheme = ColorScheme::Dark
-                }
-                // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
+                ui.add(Label::new("Color Scheme"));
+                ui.horizontal(|ui| {
+                    // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
+                    // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.color_scheme == ColorScheme::Light,
+                            "Light",
+                        ))
+                        .clicked()
+                    {
+                        println!("Light");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.color_scheme = ColorScheme::Light
+                    }
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.color_scheme == ColorScheme::Dark,
+                            "Dark",
+                        ))
+                        .clicked()
+                    {
+                        println!("Dark");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.color_scheme = ColorScheme::Dark
+                    }
+                    // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
+                });
             });
             ui.end_row();
 

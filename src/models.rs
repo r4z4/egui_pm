@@ -45,7 +45,7 @@ pub struct UserPreference {
     pub color_scheme: ColorScheme,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Account {
     pub id: i32,
     pub name: String

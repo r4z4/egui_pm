@@ -292,13 +292,16 @@ pub fn get_creds(conn: &Arc<Mutex<Connection>>, acc: &str, user_id: i32) -> Resu
     Ok(final_cred)
 }
 
-pub fn delete_cred(conn: &Arc<Mutex<Connection>>, acc: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_cred(conn: &Arc<Mutex<Connection>>, acc: &str, user_id: i32) -> Result<(), Box<dyn std::error::Error>> {
+    dbg!(&acc);
+    dbg!(&user_id);
     let conn = conn.lock().unwrap();
     let select_sql = "DELETE FROM credential
-                    WHERE name = :name";
+                    WHERE name = :name
+                    AND user_id = :user_id";
     let mut stmt = conn.prepare(select_sql)?;
-    let mut rows = stmt.query([])?;
-
+    let rows = stmt.execute(&[(":name", acc), (":user_id", user_id.to_string().as_str())])?;
+    println!("Deleted {} row(s)", rows);
     // while let Some(row) = rows.next()? {
     // }
     Ok(())
@@ -381,8 +384,6 @@ fn get_color_scheme(id: i32) -> ColorScheme {
 fn build_user_preference(db_name: String, color_scheme_id: i32) -> UserPreference {
     dbg!(&color_scheme_id);
     let up = UserPreference {font_family: get_font_family(&db_name), color_scheme: get_color_scheme(color_scheme_id)};
-    println!("BUILDING UP");
-    dbg!(&up);
     up
 }
 

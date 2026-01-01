@@ -1,15 +1,12 @@
 #![windows_subsystem = "windows"] // Tell Windows to run this as a pure GUI app
 
 use std::{
-    fs::OpenOptions, sync::{Arc, Mutex}, time::{Duration, Instant}
+    fs::OpenOptions,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
-use aes_gcm::{
-    Aes256Gcm,
-    Key,
-    Nonce,
-    aead::{Aead, KeyInit}, // Or `Aes128Gcm`
-};
 use catppuccin_egui::Theme;
 use eframe::{
     egui::{
@@ -20,20 +17,18 @@ use eframe::{
 };
 use rusqlite::Connection;
 const DB_PATH: &str = "_pmdb.db";
-
+use std::io::Write;
 mod db_utils;
 mod forms;
 mod models;
 mod utils;
 use crate::{
-    db_utils::{
-        create_db, get_creds, get_current_accounts, get_current_users, save_pin_to_db, user_from_id,
-    },
-    forms::{AccountForm, ColorScheme, PreferencesForm},
+    db_utils::{create_db, get_creds, get_current_accounts, get_current_users},
+    forms::{AccountForm, AccountSetupForm, ColorScheme, PreferencesForm},
     models::{Account, Credential, CredentialDetails, User},
+    utils::decrypt,
 };
 use dotenvy::dotenv;
-use std::env;
 
 #[cfg(target_os = "windows")]
 use is_elevated::is_elevated;
@@ -46,6 +41,8 @@ struct AppDisplays {
     show_preferences_dialog: bool,
     show_credential_popup: bool,
     show_invalid_password: bool,
+    show_delete_warning: bool,
+    show_delete_confirmation: bool,
     show_edit_dialog: bool,
     popup_start_time: Option<Instant>,
 }
@@ -54,48 +51,33 @@ struct AppDisplays {
 struct AppForms {
     preferences_form: PreferencesForm,
     account_form: AccountForm,
+    pub account_setup_form: AccountSetupForm,
+}
+
+#[derive(Default)]
+struct AppObjects {
+    cred: Option<Credential>,
+    account_edit: Option<String>,
+    account_delete: Option<String>,
+    login_user_id: Option<i32>,
+    login_pin: String,
+    pin: String,
+}
+
+#[derive(Default)]
+struct AppSelections {
+    selected_value: Option<usize>, // Index in Vec
+    selected_user: Option<usize>,
 }
 
 #[derive(Default)]
 struct App {
     conn: Option<Arc<Mutex<Connection>>>,
-    accounts: Vec<Account>,
-    users: Vec<User>,
-    selected_value: Option<usize>, // Index in Vec
-    selected_user: Option<usize>,
-    cred: Option<Credential>,
-    pin: String,
-    login_pin: String,
-    account_edit: Option<String>,
-    // authenticated: bool, // Just use current_user presence
     current_user: Option<User>,
-    login_user_id: Option<i32>,
-    app_displays: AppDisplays,
+    objects: AppObjects,
+    displays: AppDisplays,
     forms: AppForms,
-}
-
-fn decrypt(cred: &Credential) -> String {
-    let aes_key: &str = &env::var("AES_KEY").expect("AES_KEY must be set in .env file");
-    let key = Key::<Aes256Gcm>::from_slice(aes_key.as_bytes());
-    let cipher = Aes256Gcm::new(&key);
-    println!("After cipher");
-    let unwrapped = &cred.nonce.clone().unwrap();
-    let nonce = Nonce::from_slice(&unwrapped);
-    let res = cipher.decrypt(&nonce, cred.password_crypto.as_ref());
-    match res {
-        Ok(bytes) => {
-            if let Ok(str) = String::from_utf8(bytes.to_vec()) {
-                str
-            } else {
-                println!("Error Decrypting from Res");
-                "".to_string()
-            }
-        }
-        Err(e) => {
-            println!("Error Decrypting: {}", e);
-            "".to_string()
-        }
-    }
+    selections: AppSelections,
 }
 
 impl eframe::App for App {
@@ -104,9 +86,9 @@ impl eframe::App for App {
         if is_root::is_root() {
             println!("You are running this program as an root");
             self.admin_menu(ctx); // No bool for this as it just always shows for now
-            if self.app_displays.show_admin_reset_menu {
+            if self.displays.show_admin_reset_menu {
                 self.admin_setup_menu(ctx);
-            } else if self.app_displays.show_admin_setup_menu {
+            } else if self.displays.show_admin_setup_menu {
                 self.admin_setup_menu(ctx);
             } else {
                 todo!();
@@ -125,7 +107,7 @@ impl eframe::App for App {
             }
         };
         set_styles(ctx, self.current_user.clone());
-        self.show_top_bar(ctx);
+        self.top_menu_bar(ctx);
         println!("Updating");
         CentralPanel::default().show(ctx, |ui| {
             if let Some(_current_user) = &self.current_user {
@@ -133,24 +115,24 @@ impl eframe::App for App {
                 ui.add_space(5.0);
                 ui.separator();
                 ui.add_space(5.0);
-                
+
                 #[cfg(target_os = "windows")]
                 if is_elevated::is_elevated() {
                     ui.small("Running as Admin");
                 };
-                
+
                 // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 //     self.show_combo_box(ui);
                 // });
-                
+
                 self.combo_box(ui);
                 self.handle_state_dialogs(ctx);
-                if let Some(cred) = &self.cred.clone() {
+                if let Some(cred) = &self.objects.cred.clone() {
                     ui.separator();
                     let pw_str = decrypt(cred);
                     // ui.small(cred.name.clone());
                     // ui.small(cred.description.clone().unwrap_or_default());
-                    if self.app_displays.show_credential_popup {
+                    if self.displays.show_credential_popup {
                         self.credential_popup(ctx, pw_str, cred);
                     }
                     self.show_popup_timer(ctx, ui);
@@ -178,7 +160,14 @@ fn main() -> Result<(), eframe::Error> {
     // });
     dotenv().ok();
     // let conn = Connection::open(DB_PATH).unwrap();
+    #[cfg(target_os = "macos")]
+    let data_dir = "~/Library/Application Support/aalmp";
+    #[cfg(target_os = "linux")]
     let data_dir = "data";
+    // let data_dir = "~/.local/share/aalmp"; // Or ~/.config/aalmp
+    #[cfg(target_os = "windows")]
+    let data_dir = "data"; // %APPDATA% or %LOCALAPPDATA% (e.g., C:\Users\Username\AppData\Roaming\aalmp)
+
     let db_path = format!("{}/_pmdb.db", data_dir);
 
     // Create the data directory if it doesn't exist
@@ -191,7 +180,6 @@ fn main() -> Result<(), eframe::Error> {
         .open(&db_path);
     let _res = match open_options {
         Ok(_path) => {
-
             println!("DB Created");
         }
         Err(e) => {
@@ -230,7 +218,6 @@ fn main() -> Result<(), eframe::Error> {
 }
 
 fn get_theme(cs: ColorScheme) -> Theme {
-    dbg!(&cs);
     match cs {
         ColorScheme::Light => catppuccin_egui::LATTE,
         ColorScheme::Dark => catppuccin_egui::MOCHA,
@@ -239,7 +226,6 @@ fn get_theme(cs: ColorScheme) -> Theme {
 }
 
 fn set_styles(ctx: &Context, current_user: Option<User>) {
-    dbg!(&current_user);
     let font_family = {
         if let Some(user) = &current_user {
             user.preferences.font_family.clone()
@@ -264,6 +250,25 @@ fn set_styles(ctx: &Context, current_user: Option<User>) {
     .into();
     ctx.set_style(style);
     catppuccin_egui::set_theme(&ctx, theme);
+}
+
+fn create_env_file(input: String) {
+    let env_path = Path::new("./.env");
+    let res = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(&env_path);
+    match res {
+        Ok(mut env_file) => {
+            println!(".env created. writing to.");
+            let _ = writeln!(env_file, "AES_KEY={:?}", input);
+        }
+        Err(e) => {
+            eprintln!("Error creating .env file: {}", e);
+        }
+    };
 }
 
 // Function to make HTTP req to get RSS data from internet
@@ -297,17 +302,17 @@ impl App {
     //     }
     // }
     fn handle_state_dialogs(&mut self, ctx: &Context) {
-        if self.app_displays.show_edit_dialog {
+        if self.displays.show_edit_dialog {
             self.edit_dialog(ctx);
         }
-        if self.app_displays.show_preferences_dialog {
+        if self.displays.show_preferences_dialog {
             self.preferences_dialog(ctx);
         }
     }
     fn show_popup_timer(&mut self, ctx: &Context, _ui: &mut egui::Ui) {
         let str: String = {
-            if self.app_displays.show_credential_popup {
-                if let Some(start_time) = self.app_displays.popup_start_time {
+            if self.displays.show_credential_popup {
+                if let Some(start_time) = self.displays.popup_start_time {
                     if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
                         "Times up!".to_string()
                     } else {
@@ -327,12 +332,18 @@ impl App {
             ui.small(str);
         });
     }
-    fn show_top_bar(&mut self, ctx: &Context) {
+    fn top_menu_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.add_enabled(self.current_user.is_some(), egui::Button::new("Edit Credential")).clicked() {
-                        self.app_displays.show_edit_dialog = true;
+                    if ui
+                        .add_enabled(
+                            self.current_user.is_some(),
+                            egui::Button::new("Edit Credential"),
+                        )
+                        .clicked()
+                    {
+                        self.displays.show_edit_dialog = true;
                         println!("Set Edit to True");
                         ui.close_kind(UiKind::Menu)
                     }
@@ -341,8 +352,14 @@ impl App {
                     }
                 });
                 ui.menu_button("Settings", |ui| {
-                    if ui.add_enabled(self.current_user.is_some(), egui::Button::new("Preferences")).clicked() {
-                        self.app_displays.show_preferences_dialog = true;
+                    if ui
+                        .add_enabled(
+                            self.current_user.is_some(),
+                            egui::Button::new("Preferences"),
+                        )
+                        .clicked()
+                    {
+                        self.displays.show_preferences_dialog = true;
                         ui.close_kind(UiKind::Menu)
                     }
                 })
@@ -360,13 +377,13 @@ impl App {
         } else {
             print!("No Conn");
         }
-        self.accounts = accounts.clone();
+        // self.current_user.accounts = accounts.clone();
 
         egui::Window::new("Edit Credential")
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
-                if let Some(acct_name) = &self.account_edit {
+                if let Some(acct_name) = &self.objects.account_edit {
                     println!("Wanting to edit {}", acct_name);
                     if let Some(conn) = &self.conn {
                         if let Some(user) = &self.current_user {
@@ -377,22 +394,23 @@ impl App {
                                 }
                                 Err(_e) => {
                                     println!("Error");
+                                    // self.account_edit = None;
                                 }
                             }
                         }
                     }
-                } else {   
-                    ui.label(RichText::new("Edit Credential").size(14.0));
+                } else {
+                    ui.label(RichText::new("Edit Credential").size(12.0));
                     for acct in accounts {
                         if ui.button(&acct.name).clicked() {
-                            self.account_edit = Some(acct.name);
+                            self.objects.account_edit = Some(acct.name);
                         }
                     }
+                    if ui.button("Cancel").clicked() {
+                        self.displays.show_edit_dialog = false; // Close dialog
+                        self.objects.account_edit = None;
+                    }
                 }
-                if ui.button("Cancel").clicked() {
-                    self.app_displays.show_edit_dialog = false; // Close dialog
-                }
-                // Add any other elements here
             });
     }
     fn preferences_dialog(&mut self, ctx: &Context) {
@@ -403,7 +421,7 @@ impl App {
                 ui.label(RichText::new("Preferences").size(14.0));
                 App::settings_form_two(self, ui);
                 if ui.button("Cancel").clicked() {
-                    self.app_displays.show_preferences_dialog = false; // Close dialog
+                    self.displays.show_preferences_dialog = false; // Close dialog
                 }
             });
     }
@@ -415,7 +433,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.label(RichText::new("Invalid Password").size(14.0));
                 if ui.button("Try Again").clicked() {
-                    self.app_displays.show_invalid_password = false; // Close dialog
+                    self.displays.show_invalid_password = false; // Close dialog
                 }
             });
     }
@@ -426,34 +444,7 @@ impl App {
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Please set a 4 digit PIN.").size(14.0));
-                ui.horizontal(|ui| {
-                    // Limit to 4 characters, only allow digits, single line
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.pin)
-                            .char_limit(4)
-                            .hint_text("1234"),
-                    );
-                });
-                if ui.button("Submit").clicked() {
-                    // Save PIN to DB & Show Message
-                    match &self.conn {
-                        Some(conn) => {
-                            println!("We have a conn!");
-                            let _ = save_pin_to_db(&conn, self.pin.clone());
-                        }
-                        None => println!("No Conn"),
-                    }
-                    ui.small("You can now use this PIN to access and use Password Manager");
-                    self.app_displays.show_preferences_dialog = false; // Close dialog
-                }
-                if ui.button("Cancel").clicked() {
-                    self.app_displays.show_preferences_dialog = false; // Close dialog
-                }
-                // // Validate: Only allow numeric input
-                // if !self.pin.chars().all(|c| c.is_digit(10)) {
-                //     self.pin.retain(|c| c.is_digit(10));
-                // }
+                self.account_setup_form(ui);
             });
     }
 
@@ -480,11 +471,11 @@ impl App {
             .show(ctx, |ui| {
                 ui.small("You are already set up to use password manager. If you would like to reset privileges, click reset below.");
                 if ui.button("Reset").clicked() {
-                    self.app_displays.show_admin_reset_menu = true; // Close dialog
+                    self.displays.show_admin_reset_menu = true; // Close dialog
                 }
             });
         } else {
-            self.app_displays.show_admin_setup_menu = true;
+            self.displays.show_admin_setup_menu = true;
         }
     }
     fn credential_popup(&mut self, ctx: &Context, pw_str: String, cred: &Credential) {
@@ -492,6 +483,10 @@ impl App {
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
+                if let Some(desc) = &cred.description {
+                    ui.label(RichText::new(desc).size(10.0))
+                        .on_hover_cursor(egui::CursorIcon::Text);
+                }
                 ui.label(RichText::new(format!("Username: {}", cred.name.clone())).size(14.0))
                     .on_hover_cursor(egui::CursorIcon::Text);
                 ui.label(RichText::new(format!("Password: {}", pw_str)).size(14.0))
@@ -501,14 +496,14 @@ impl App {
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    self.app_displays.show_credential_popup = false;
+                    self.displays.show_credential_popup = false;
                 }
             });
-        if let Some(start_time) = self.app_displays.popup_start_time {
+        if let Some(start_time) = self.displays.popup_start_time {
             if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
                 println!("Setting popups to false");
-                self.app_displays.show_credential_popup = false;
-                self.app_displays.popup_start_time = None; // Reset timer
+                self.displays.show_credential_popup = false;
+                self.displays.popup_start_time = None; // Reset timer
             } else {
                 println!("Time not up yet");
                 // Keep requesting repaint until time is up
@@ -548,7 +543,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(my_frame)
             .show(ctx, |ui| {
-                if self.app_displays.show_auth_pin_entry {
+                if self.displays.show_auth_pin_entry {
                     self.auth_pin_entry(ctx);
                 } else {
                     let mut users: Vec<User> = vec![];
@@ -561,11 +556,10 @@ impl App {
                     } else {
                         print!("No Conn");
                     }
-                    self.users = users;
                     ui.small("Welcome back. Please select user.");
                     ComboBox::from_label("Username")
-                        .selected_text(if let Some(index) = self.selected_user {
-                            if let Some(usr) = self.users.get(index) {
+                        .selected_text(if let Some(index) = self.selections.selected_user {
+                            if let Some(usr) = users.get(index) {
                                 &usr.username
                             } else {
                                 "Select One"
@@ -574,20 +568,20 @@ impl App {
                             "Select One"
                         })
                         .show_ui(ui, |ui| {
-                            for (i, usr) in self.users.clone().iter().enumerate() {
+                            for (i, usr) in users.clone().iter().enumerate() {
                                 if ui
                                     .selectable_value(
-                                        &mut self.selected_user, // What it is now
+                                        &mut self.selections.selected_user, // What it is now
                                         Some(i), // What selected value will be when this is clicked
                                         &usr.username,
                                     )
                                     .clicked()
                                 {
                                     println!("Clicked");
-                                    if let Some(usr) = self.users.clone().get(i) {
+                                    if let Some(usr) = users.clone().get(i) {
                                         println!("Some User");
-                                        self.app_displays.show_auth_pin_entry = true;
-                                        self.login_user_id = Some(usr.id);
+                                        self.displays.show_auth_pin_entry = true;
+                                        self.objects.login_user_id = Some(usr.id);
                                         // ctx.request_repaint_after(std::time::Duration::from_secs(10));
                                     } else {
                                         println!("No User ?");
@@ -599,48 +593,12 @@ impl App {
             });
     }
     fn auth_pin_entry(&mut self, ctx: &Context) {
-        if let Some(login_user_id) = self.login_user_id {
+        if let Some(login_user_id) = self.objects.login_user_id {
             egui::Window::new("Enter PIN")
                 .collapsible(false)
                 .movable(false)
                 .show(ctx, |ui| {
-                    if self.app_displays.show_invalid_password {
-                        self.invalid_password(ctx);
-                    } else {
-                        ui.label(RichText::new("Enter PIN").size(14.0));
-                        ui.horizontal(|ui| {
-                            // Limit to 4 characters, only allow digits, single line
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.login_pin)
-                                    .char_limit(4)
-                                    .hint_text("0000"),
-                            );
-                        });
-                        if ui.button("Submit").clicked() {
-                            // Check PIN
-
-                            match &self.conn {
-                                Some(conn) => {
-                                    match user_from_id(&conn, login_user_id) {
-                                        Ok(pin_user) => {
-                                            if self.login_pin == pin_user.pin {
-                                                self.current_user = Some(pin_user);
-                                            } else {
-                                                dbg!(&pin_user.pin);
-                                                dbg!(&self.login_pin);
-                                                println!("Invalid Password");
-                                                self.app_displays.show_invalid_password = true;
-                                            }
-                                        }
-                                        Err(e) => println!("{}", e.to_string()),
-                                    };
-                                }
-                                None => println!("No Conn"),
-                            }
-
-                            ui.small("You can now use this PIN to access and use Password Manager");
-                        }
-                    }
+                    self.auth_pin_entry_form(ui, ctx, login_user_id);
                 });
         } else {
             println!("No Login User ID");
@@ -658,10 +616,9 @@ impl App {
         } else {
             print!("No Conn");
         }
-        self.accounts = accounts;
         ComboBox::from_label("Select Account")
-            .selected_text(if let Some(index) = self.selected_value {
-                if let Some(acc) = self.accounts.get(index) {
+            .selected_text(if let Some(index) = self.selections.selected_value {
+                if let Some(acc) = accounts.get(index) {
                     &acc.name
                 } else {
                     "Select me"
@@ -670,20 +627,18 @@ impl App {
                 "Select me"
             })
             .show_ui(ui, |ui| {
-                for (i, acc) in self.accounts.clone().iter().enumerate() {
+                for (i, acc) in accounts.clone().iter().enumerate() {
                     if ui
                         .selectable_value(
-                            &mut self.selected_value, // What it is now
+                            &mut self.selections.selected_value, // What it is now
                             Some(i), // What selected value will be when this is clicked
                             &acc.name,
                         )
                         .clicked()
                     {
-                        if let Some(acc) = self.accounts.clone().get(i) {
-                            // Fetch whatever details to display upon user selection
-                            // get_feed();
-                            self.app_displays.show_credential_popup = true;
-                            self.app_displays.popup_start_time = Some(Instant::now());
+                        if let Some(acc) = accounts.clone().get(i) {
+                            self.displays.show_credential_popup = true;
+                            self.displays.popup_start_time = Some(Instant::now());
                             let user_id = {
                                 if let Some(current_user) = &self.current_user {
                                     current_user.id
@@ -696,7 +651,7 @@ impl App {
                             match &self.conn {
                                 Some(conn) => {
                                     match get_creds(&conn, &acc.name, user_id) {
-                                        Ok(cred) => self.cred = Some(cred),
+                                        Ok(cred) => self.objects.cred = Some(cred),
                                         Err(e) => println!("{}", e.to_string()),
                                     };
                                 }

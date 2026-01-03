@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use eframe::egui::{self, FontFamily, Label, RichText};
+use eframe::egui::{self, Color32, Context, FontFamily, Label, RichText};
 use rand::{Rng, distr::Alphanumeric};
 
 use crate::{
@@ -17,12 +17,14 @@ use crate::{
 pub struct PreferencesForm {
     font_family: FontFamily,
     color_scheme: ColorScheme,
+    font_size: f32,
     in_edit: bool,
     // font_family: String
 }
 
 #[derive(Default)]
 pub struct AccountForm {
+    id: Option<i32>,
     name: String,
     password: String,
     description: String,
@@ -42,6 +44,7 @@ pub enum ColorScheme {
     Light,
     Dark,
 }
+
 
 impl App {
     pub fn account_setup_form(&mut self, ui: &mut egui::Ui) {
@@ -124,7 +127,7 @@ impl App {
         if self.displays.show_invalid_password {
             self.invalid_password(ctx);
         } else {
-            ui.label(RichText::new("Enter PIN").size(14.0));
+            ui.label(RichText::new("Enter PIN").size(12.0));
             ui.horizontal(|ui| {
                 // Limit to 4 characters, only allow digits, single line
                 ui.add(
@@ -160,115 +163,151 @@ impl App {
             }
         }
     }
-    pub fn account_form(&mut self, ui: &mut egui::Ui, credential: Option<Credential>) {
+    pub fn account_form(&mut self, ui: &mut egui::Ui, ctx: &Context, credential: Option<Credential>) {
         if self.displays.show_delete_confirmation {
             ui.small("Record has been removed. Hit Ok to return Home.");
             if ui.button("Ok").clicked() {
                 self.displays.show_delete_warning = false;
                 self.displays.show_delete_confirmation = false;
                 self.displays.show_edit_dialog = false;
+                self.displays.show_account_form = false;
             }
         } else {
             if self.displays.show_delete_warning {
-                // self.dialogs.delete_warning(ui);
-                if let Some(user) = &self.current_user {
-                    if let Some(acct_del) = &self.objects.account_delete {
-                        if ui.button("Confirm Delete").clicked() {
-                            match &self.conn {
-                                Some(conn) => {
-                                    println!("DELETING {} FROM DATABASE", &acct_del);
-                                    let res = delete_cred(conn, acct_del, user.id);
-                                    match res {
-                                        Ok(_del) => println!("Success"),
-                                        Err(e) => println!("Err: {}", e),
+                egui::Grid::new("my_grid").striped(false).show(ui, |ui| {
+                    // self.dialogs.delete_warning(ui);
+                    if let Some(user) = &self.current_user {
+                        if let Some(acct_del) = &self.objects.account_delete {
+                            ui.small(format!("Corfirm deletion of {}", &acct_del));
+                            ui.end_row();
+                            if ui.button("Confirm Delete").clicked() {
+                                match &self.conn {
+                                    Some(conn) => {
+                                        println!("DELETING {} FROM DATABASE", &acct_del);
+                                        let res = delete_cred(conn, acct_del, user.id);
+                                        match res {
+                                            Ok(_del) => println!("Success"),
+                                            Err(e) => println!("Err: {}", e),
+                                        }
                                     }
+                                    None => println!("No Conn"),
                                 }
-                                None => println!("No Conn"),
+                                self.displays.show_delete_confirmation = true;
+                                self.displays.show_delete_warning = false;
                             }
-                            self.displays.show_delete_confirmation = true;
-                            self.displays.show_delete_warning = false;
                         }
                     }
-                }
-                if ui.button("Cancel").clicked() {
-                    self.displays.show_delete_warning = false;
-                }
+                    if ui.button("Cancel").clicked() {
+                        self.displays.show_delete_warning = false;
+                    }
+                    ui.end_row();
+                });
             } else {
-                let mut heading = "New Account".to_string();
-                if let Some(cred) = &credential {
-                    heading = cred.name.clone();
+                let heading = if let Some(cred) = &credential {
+                    cred.name.clone()
+                } else {
+                    "New Account".to_string()
+                };
+                if !self.forms.account_form.updating
+                    && let Some(cred) = &credential
+                {
                     self.forms.account_form.updating = true;
+                    self.forms.account_form.id = cred.id.clone();
                     self.forms.account_form.name = cred.name.clone();
                     self.forms.account_form.password = decrypt(&cred);
                     self.forms.account_form.description =
                         cred.description.clone().unwrap_or("".to_string());
                 }
-                ui.collapsing(heading, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        egui::Grid::new("form_grid")
-                            .num_columns(2)
-                            .spacing([8.0, 12.0])
-                            .show(ui, |ui| {
-                                ui.label("Name");
-                                ui.text_edit_singleline(&mut self.forms.account_form.name);
-                                ui.end_row();
-                                ui.label("Password");
-                                ui.text_edit_singleline(&mut self.forms.account_form.password);
-                                ui.end_row();
-                                ui.label("Description");
-                                ui.text_edit_singleline(&mut self.forms.account_form.description);
-                                ui.end_row();
-                            });
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Submit").clicked() {
-                                let user_id = {
-                                    if let Some(current_user) = &self.current_user {
-                                        current_user.id
-                                    } else {
-                                        0
-                                    }
-                                };
-                                let input_vec = vec![CredentialInput {
-                                    id: None,
-                                    user_id: user_id,
-                                    name: self.forms.account_form.name.clone(),
-                                    password: self.forms.account_form.password.clone(),
-                                    description: self.forms.account_form.description.clone(),
-                                }];
-                                dbg!(&input_vec);
-                                match &self.conn {
-                                    Some(conn) => {
-                                        println!("We have a conn!");
-                                        // Just use presence of id on the form rather than updating bool
-                                        if self.forms.account_form.updating {
-                                            let _ = update_entries(&conn, input_vec);
+                if self.displays.show_account_form {
+                    egui::Window::new(self.window_header("New/Edit Credential"))
+                        .collapsible(false)
+                        .movable(false)
+                        .show(ctx, |ui| {
+                        ui.vertical_centered_justified(|ui| {
+                            egui::Grid::new("form_grid")
+                                .num_columns(2)
+                                .spacing([8.0, 12.0])
+                                .show(ui, |ui| {
+                                    ui.label("Name");
+                                    ui.text_edit_singleline(&mut self.forms.account_form.name);
+                                    ui.end_row();
+                                    ui.label("Password");
+                                    ui.text_edit_singleline(&mut self.forms.account_form.password);
+                                    ui.end_row();
+                                    ui.label("Description");
+                                    ui.text_edit_singleline(&mut self.forms.account_form.description);
+                                    ui.end_row();
+                                });
+                            ui.add_space(10.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Submit").clicked() {
+                                    let user_id = {
+                                        if let Some(current_user) = &self.current_user {
+                                            current_user.id
                                         } else {
-                                            let _ = add_entries(&conn, input_vec);
+                                            0
                                         }
-                                        // self.accounts.push((self.name_input.clone(), self.password_input.clone()));
-                                        self.forms.account_form.name.clear();
-                                        self.forms.account_form.password.clear();
-                                        self.forms.account_form.description.clear();
-                                        self.objects.account_edit = None;
+                                    };
+                                    let input_vec = vec![CredentialInput {
+                                        id: self.forms.account_form.id,
+                                        user_id: user_id,
+                                        name: self.forms.account_form.name.clone(),
+                                        password: self.forms.account_form.password.clone(),
+                                        description: self.forms.account_form.description.clone(),
+                                    }];
+                                    dbg!(&input_vec);
+                                    match &self.conn {
+                                        Some(conn) => {
+                                            println!("We have a conn!");
+                                            // Just use presence of id on the form rather than updating bool
+                                            if self.forms.account_form.updating {
+                                                let _ = update_entries(&conn, input_vec);
+                                            } else {
+                                                let _ = add_entries(&conn, input_vec);
+                                            }
+                                            // self.accounts.push((self.name_input.clone(), self.password_input.clone()));
+                                            self.forms.account_form.name.clear();
+                                            self.forms.account_form.password.clear();
+                                            self.forms.account_form.description.clear();
+                                            self.objects.account_edit = None;
+                                            self.forms.account_form.updating = false;
+                                            self.displays.show_account_form = false;
+                                        }
+                                        None => println!("No Conn"),
                                     }
-                                    None => println!("No Conn"),
                                 }
-                            }
-                            if ui.button("Clear").clicked() {
-                                self.forms.account_form.name.clear();
-                                self.forms.account_form.password.clear();
-                                self.forms.account_form.description.clear();
-                            }
-                            if let Some(cred) = &credential {
-                                if ui.button("Delete").clicked() {
-                                    self.displays.show_delete_warning = true;
-                                    self.objects.account_delete = Some(cred.name.clone());
+                                if ui.button("Reset").clicked() {
+                                    self.forms.account_form.updating = false;
                                 }
-                            }
+                                if ui.button("Clear").clicked() {
+                                    self.forms.account_form.name.clear();
+                                    self.forms.account_form.password.clear();
+                                    self.forms.account_form.description.clear();
+                                }
+                                if let Some(cred) = &credential {
+                                    if ui.button("Delete").clicked() {
+                                        self.displays.show_delete_warning = true;
+                                        self.forms.account_form.updating = false;
+                                        self.objects.account_delete = Some(cred.name.clone());
+                                    }
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    self.forms.account_form.name.clear();
+                                    self.forms.account_form.password.clear();
+                                    self.forms.account_form.description.clear();
+                                    self.displays.show_edit_dialog = false;
+                                    self.forms.account_form.updating = false;
+                                    self.objects.account_edit = None;
+                                    self.displays.show_account_form = false;
+                                }
+                            });
                         });
                     });
-                });
+                } else {
+                    if ui.button(&heading).clicked() {
+                        self.displays.show_account_form = true;
+                    }
+                }
             }
         }
     }
@@ -284,6 +323,13 @@ impl App {
 
             // ui.radio_value(&mut my_enum, Enum::First, "First");
             // ui.checkbox(&mut self.is_checked, "Option Enabled");
+            if !self.forms.preferences_form.in_edit
+                    && let Some(user) = &self.current_user
+                {
+                    self.forms.preferences_form.font_family = user.preferences.font_family.clone();
+                    self.forms.preferences_form.color_scheme = user.preferences.color_scheme.clone();
+                    self.forms.preferences_form.font_size = user.preferences.font_size;
+                }
             // Font Family
             ui.horizontal(|ui| {
                 ui.add(Label::new("Font Family"));
@@ -349,6 +395,39 @@ impl App {
             });
             ui.end_row();
 
+            // Admin Color
+            ui.horizontal(|ui| {
+                ui.add(Label::new("Font Size"));
+                ui.horizontal(|ui| {
+                    // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
+                    // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.font_size == 12.0,
+                            "12",
+                        ))
+                        .clicked()
+                    {
+                        println!("Font 12");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.font_size = 12.0;
+                    }
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.font_size == 16.0,
+                            "16",
+                        ))
+                        .clicked()
+                    {
+                        println!("Font 16");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.font_size = 16.0;
+                    }
+                    // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
+                });
+            });
+            ui.end_row();
+
             ui.horizontal(|ui| {
                 if ui.button("Submit").clicked() {
                     // Save to DB
@@ -364,6 +443,7 @@ impl App {
                         user_id: user_id,
                         font_family: self.forms.preferences_form.font_family.clone(),
                         color_scheme: self.forms.preferences_form.color_scheme.clone(),
+                        font_size: self.forms.preferences_form.font_size.clone(),
                     }];
                     dbg!(&input_vec);
                     match &self.conn {
@@ -386,6 +466,8 @@ impl App {
                 }
                 if ui.button("Clear").clicked() {
                     self.forms.preferences_form.font_family = FontFamily::Monospace;
+                    self.forms.preferences_form.color_scheme = ColorScheme::Dark;
+                    self.forms.preferences_form.font_size = 12.0;
                 }
             });
         });
@@ -478,6 +560,7 @@ impl App {
                         user_id: user_id,
                         font_family: self.forms.preferences_form.font_family.clone(),
                         color_scheme: self.forms.preferences_form.color_scheme.clone(),
+                        font_size: self.forms.preferences_form.font_size.clone()
                     }];
                     dbg!(&input_vec);
                     match &self.conn {

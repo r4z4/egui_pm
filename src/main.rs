@@ -33,8 +33,23 @@ use dotenvy::dotenv;
 #[cfg(target_os = "windows")]
 use is_elevated::is_elevated;
 
+#[derive(Debug)]
+struct AppStyles {
+    window_title_font_size: f32,
+}
+
+impl Default for AppStyles {
+    fn default() -> Self {
+        AppStyles {
+            window_title_font_size: 12.0
+        }
+    }
+}
+
+
 #[derive(Default)]
 struct AppDisplays {
+    show_account_form: bool,
     show_auth_pin_entry: bool,
     show_admin_setup_menu: bool,
     show_admin_reset_menu: bool,
@@ -78,6 +93,7 @@ struct App {
     displays: AppDisplays,
     forms: AppForms,
     selections: AppSelections,
+    styles: AppStyles,
 }
 
 impl eframe::App for App {
@@ -111,7 +127,7 @@ impl eframe::App for App {
         println!("Updating");
         CentralPanel::default().show(ctx, |ui| {
             if let Some(_current_user) = &self.current_user {
-                App::account_form(self, ui, None);
+                App::account_form(self, ui, ctx, None);
                 ui.add_space(5.0);
                 ui.separator();
                 ui.add_space(5.0);
@@ -128,14 +144,13 @@ impl eframe::App for App {
                 self.combo_box(ui);
                 self.handle_state_dialogs(ctx);
                 if let Some(cred) = &self.objects.cred.clone() {
-                    ui.separator();
                     let pw_str = decrypt(cred);
                     // ui.small(cred.name.clone());
                     // ui.small(cred.description.clone().unwrap_or_default());
                     if self.displays.show_credential_popup {
                         self.credential_popup(ctx, pw_str, cred);
                     }
-                    self.show_popup_timer(ctx, ui);
+                    self.popup_timer(ctx, ui);
                 }
             } else {
                 self.auth_screen(ctx, ui);
@@ -200,8 +215,10 @@ fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_resizable(true)
-            .with_inner_size([620.0, 440.0])
+            .with_inner_size([500.0, 300.0])
             .with_min_inner_size([320.0, 240.0]),
+        #[cfg(target_os = "macos")]
+        run_and_return: false, // Stops 'Unexpectedly Quit' Message on Close
         ..Default::default()
     };
     // eframe::run_native("app_name", options, Box::new(|_cc| Ok(Box::<App>::default())))
@@ -226,18 +243,11 @@ fn get_theme(cs: ColorScheme) -> Theme {
 }
 
 fn set_styles(ctx: &Context, current_user: Option<User>) {
-    let font_family = {
+    let (font_family, _font_size, theme) = {
         if let Some(user) = &current_user {
-            user.preferences.font_family.clone()
+            (user.preferences.font_family.clone(), user.preferences.font_size.clone(), get_theme(user.preferences.color_scheme.clone()))
         } else {
-            FontFamily::Monospace
-        }
-    };
-    let theme = {
-        if let Some(user) = current_user {
-            get_theme(user.preferences.color_scheme)
-        } else {
-            catppuccin_egui::LATTE
+            (FontFamily::Monospace, 12.0, catppuccin_egui::LATTE)
         }
     };
     let mut style = (*ctx.style()).clone();
@@ -301,6 +311,10 @@ impl App {
     //         };
     //     }
     // }
+    fn window_header(&mut self, str: &str) -> RichText {
+        RichText::new(str).size(self.styles.window_title_font_size)
+    }
+
     fn handle_state_dialogs(&mut self, ctx: &Context) {
         if self.displays.show_edit_dialog {
             self.edit_dialog(ctx);
@@ -309,14 +323,13 @@ impl App {
             self.preferences_dialog(ctx);
         }
     }
-    fn show_popup_timer(&mut self, ctx: &Context, _ui: &mut egui::Ui) {
+    fn popup_timer(&mut self, ctx: &Context, _ui: &mut egui::Ui) {
         let str: String = {
             if self.displays.show_credential_popup {
                 if let Some(start_time) = self.displays.popup_start_time {
                     if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
                         "Times up!".to_string()
                     } else {
-                        println!("Time not up yet");
                         let remaining =
                             Duration::from_secs(10) - Instant::now().duration_since(start_time);
                         format!("Remaining: {}", remaining.as_secs())
@@ -390,7 +403,7 @@ impl App {
                             let cred_res = get_creds(&conn.clone(), &acct_name, user.id);
                             match cred_res {
                                 Ok(cred) => {
-                                    App::account_form(self, ui, Some(cred));
+                                    App::account_form(self, ui, ctx, Some(cred));
                                 }
                                 Err(_e) => {
                                     println!("Error");
@@ -483,10 +496,13 @@ impl App {
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
-                if let Some(desc) = &cred.description {
-                    ui.label(RichText::new(desc).size(10.0))
-                        .on_hover_cursor(egui::CursorIcon::Text);
-                }
+                ui.collapsing("Details", |ui| {
+                    if let Some(desc) = &cred.description {
+                        ui.label(RichText::new(desc).size(10.0))
+                            .on_hover_cursor(egui::CursorIcon::Text);
+                    }
+                    ui.label(RichText::new(cred.details.updated_at.to_string()).size(10.0));
+                });                
                 ui.label(RichText::new(format!("Username: {}", cred.name.clone())).size(14.0))
                     .on_hover_cursor(egui::CursorIcon::Text);
                 ui.label(RichText::new(format!("Password: {}", pw_str)).size(14.0))
@@ -497,6 +513,7 @@ impl App {
                     .clicked()
                 {
                     self.displays.show_credential_popup = false;
+                    self.selections.selected_value = None;
                 }
             });
         if let Some(start_time) = self.displays.popup_start_time {
@@ -504,6 +521,7 @@ impl App {
                 println!("Setting popups to false");
                 self.displays.show_credential_popup = false;
                 self.displays.popup_start_time = None; // Reset timer
+                self.selections.selected_value = None;
             } else {
                 println!("Time not up yet");
                 // Keep requesting repaint until time is up
@@ -519,7 +537,7 @@ impl App {
                 spread: 0,
                 color: Color32::BLACK,
             },
-            fill: Color32::LIGHT_BLUE,
+            fill: Color32::from_rgb(26, 0, 26),
             stroke: egui::Stroke::new(2.0, Color32::BLACK),
             inner_margin: crate::epaint::Margin {
                 left: 10,
@@ -556,8 +574,8 @@ impl App {
                     } else {
                         print!("No Conn");
                     }
-                    ui.small("Welcome back. Please select user.");
-                    ComboBox::from_label("Username")
+                    ui.small(RichText::new("Welcome back. Please select user.").color(Color32::WHITE));
+                    ComboBox::from_id_salt(1)
                         .selected_text(if let Some(index) = self.selections.selected_user {
                             if let Some(usr) = users.get(index) {
                                 &usr.username
@@ -594,7 +612,7 @@ impl App {
     }
     fn auth_pin_entry(&mut self, ctx: &Context) {
         if let Some(login_user_id) = self.objects.login_user_id {
-            egui::Window::new("Enter PIN")
+            egui::Window::new(self.window_header("Enter PIN"))
                 .collapsible(false)
                 .movable(false)
                 .show(ctx, |ui| {
@@ -616,7 +634,8 @@ impl App {
         } else {
             print!("No Conn");
         }
-        ComboBox::from_label("Select Account")
+        ui.small(RichText::new("Your Accounts"));
+        ComboBox::from_id_salt("select_account")
             .selected_text(if let Some(index) = self.selections.selected_value {
                 if let Some(acc) = accounts.get(index) {
                     &acc.name

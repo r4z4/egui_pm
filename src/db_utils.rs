@@ -2,7 +2,7 @@ use std::{collections::HashMap, env, io::{Error, ErrorKind}, sync::{Arc, Mutex}}
 
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, aead::{Aead, OsRng}};
 use chrono::{DateTime, Utc};
-use eframe::egui::FontFamily;
+use eframe::egui::{Color32, FontFamily};
 use rusqlite::{Connection, Row};
 
 use crate::{CredentialDetails, forms::ColorScheme, models::{Account, Credential, CredentialInput, User, UserPreference, UserPreferenceInput}};
@@ -48,6 +48,7 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
           user_id INTEGER REFERENCES user(id) UNIQUE,
           font_family TEXT NOT NULL DEFAULT 'monospace',
           color_scheme_id INTEGER REFERENCES color_scheme(id) NOT NULL DEFAULT 1, -- Light
+          font_size INTEGER NOT NULL DEFAULT 12,
           updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP
         ) STRICT",
@@ -103,7 +104,6 @@ fn build_db_credential(input: &CredentialInput) -> Credential {
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
     let nonce_slice = nonce.as_slice();
     let now: DateTime<Utc> = Utc::now();
-    dbg!(&now);
     let details = CredentialDetails {
         updated_at: now,
         created_at: now,
@@ -170,9 +170,9 @@ pub fn update_entries(conn: &Arc<Mutex<Connection>>, input_vec: Vec<CredentialIn
         dbg!(&db_cred);
         // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
         let res = conn.execute(
-            "UPDATE credential SET name = ?1, password_crypto = ?2, description = ?3, updated_at = ?4
-            WHERE id = ?5",
-            (&db_cred.name, &db_cred.password_crypto, &db_cred.description, now, &db_cred.id),
+            "UPDATE credential SET name = ?1, password_crypto = ?2, nonce = ?3, description = ?4, updated_at = ?5
+            WHERE id = ?6",
+            (&db_cred.name, &db_cred.password_crypto, &db_cred.nonce, &db_cred.description, now, &db_cred.id),
         );
         match res {
             Ok (res) => println!("{}", res),
@@ -383,7 +383,7 @@ fn get_color_scheme(id: i32) -> ColorScheme {
 
 fn build_user_preference(db_name: String, color_scheme_id: i32) -> UserPreference {
     dbg!(&color_scheme_id);
-    let up = UserPreference {font_family: get_font_family(&db_name), color_scheme: get_color_scheme(color_scheme_id)};
+    let up = UserPreference {font_family: get_font_family(&db_name), color_scheme: get_color_scheme(color_scheme_id), font_size: 12.0};
     up
 }
 

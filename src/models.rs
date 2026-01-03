@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use eframe::egui::{self, FontFamily};
+use eframe::egui::{self, Color32, FontFamily};
 use rusqlite::Connection;
 
 use crate::forms::ColorScheme;
@@ -36,6 +36,7 @@ pub struct UserPreferenceInput {
     pub user_id: i32,
     pub font_family: FontFamily,
     pub color_scheme: ColorScheme,
+    pub font_size: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -43,6 +44,7 @@ pub struct UserPreference {
     // pub user_id: i32,
     pub font_family: FontFamily,
     pub color_scheme: ColorScheme,
+    pub font_size: f32,
 }
 
 #[derive(Clone, Debug)]

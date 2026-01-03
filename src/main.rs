@@ -184,7 +184,7 @@ fn main() -> Result<(), eframe::Error> {
     // let data_dir = "data";
     let data_dir = "~/.local/share/aalmp"; // Or ~/.config/aalmp
     #[cfg(target_os = "windows")]
-    let data_dir = "data"; // %APPDATA% or %LOCALAPPDATA% (e.g., C:\Users\Username\AppData\Roaming\aalmp)
+    let data_dir = r"%APPDATA%\aalmp"; // or %LOCALAPPDATA%. (e.g., C:\Users\Username\AppData\Roaming\aalmp)
 
     let db_path = format!("{}/_pmdb.db", data_dir);
 

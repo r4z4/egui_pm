@@ -1,10 +1,7 @@
 #![windows_subsystem = "windows"] // Tell Windows to run this as a pure GUI app
 
 use std::{
-    fs::OpenOptions,
-    path::Path,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    env, fs::OpenOptions, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::{Duration, Instant}
 };
 
 use catppuccin_egui::Theme;
@@ -165,6 +162,13 @@ impl eframe::App for App {
 // fn load_init_sql() -> std::io::Result {
 //     fs::read_to_string("./init.sql")
 // }
+//
+fn build_linux_path() -> PathBuf {
+    let mut data_dir = PathBuf::from(env::var("HOME").unwrap_or("".to_string()));
+    data_dir.push(".local");
+    data_dir.push("share");
+    data_dir
+}
 
 fn main() -> Result<(), eframe::Error> {
     // let (background_event_sender, background_event_receiver) = channel::();
@@ -179,17 +183,25 @@ fn main() -> Result<(), eframe::Error> {
     dotenv().ok();
     // let conn = Connection::open(DB_PATH).unwrap();
     #[cfg(target_os = "macos")]
-    let data_dir = "~/Library/Application Support/aalmp";
+    let data_dir = "~/Library/Application Support";
     #[cfg(target_os = "linux")]
+    let data_dir = build_linux_path(); // Will mutate data_dir
+    // let data_dir = "~/.local/share"; // Or ~/.config/aalmp
     // let data_dir = "data";
-    let data_dir = "~/.local/share/aalmp"; // Or ~/.config/aalmp
     #[cfg(target_os = "windows")]
-    let data_dir = r"%APPDATA%\aalmp"; // or %LOCALAPPDATA%. (e.g., C:\Users\Username\AppData\Roaming\aalmp)
+    let data_dir = env::var("APPDATA").expect("APPDATA environment variable not found");
 
-    let db_path = format!("{}/_pmdb.db", data_dir);
+    // Construct the path
+    let mut path = PathBuf::from(data_dir);
+    path.push("aalmp");
+    
+    std::fs::create_dir_all(&path).expect("Failed to create data directory");
 
+    path.push("_pmdb.db");
+
+    // let db_path = format!("{}/_pmdb.db", data_dir);
+    let db_path = path.to_str().unwrap_or("");
     // Create the data directory if it doesn't exist
-    std::fs::create_dir_all(data_dir).expect("Failed to create data directory");
 
     let open_options = OpenOptions::new()
         .read(true)

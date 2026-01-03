@@ -117,8 +117,8 @@ impl eframe::App for App {
         if is_elevated::is_elevated() {
             println!("You are running this program as an admin");
             self.admin_menu(ctx); // No bool for this as it just always shows for now
-            if self.show_admin_reset_menu {
-                self.displays.admin_setup_menu(ctx);
+            if self.displays.show_admin_reset_menu {
+                self.admin_setup_menu(ctx);
             } else if self.displays.show_admin_setup_menu {
                 self.admin_setup_menu(ctx);
             } else {

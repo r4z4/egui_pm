@@ -18,7 +18,8 @@ pub struct PreferencesForm {
     font_family: FontFamily,
     color_scheme: ColorScheme,
     font_size: f32,
-    in_edit: bool,
+    popup_time: i8,
+    pub in_edit: bool,
     // font_family: String
 }
 
@@ -92,11 +93,11 @@ impl App {
         }
         if ui.button("Submit").clicked() {
             if self.forms.account_setup_form.pin.is_empty() {
-                ui.label(egui::RichText::new("PIN Cannot be empty").color(egui::Color32::RED));
+                ui.label(egui::RichText::new("PIN Cannot be empty").color(egui::Color32::RED).size(10.0));
             }
             if !env_path.exists() && self.forms.account_setup_form.aes_input.is_empty() {
                 // TODO: Popup w/ warning about user needing to create their own .env file
-                ui.label(egui::RichText::new("AES Cannot be empty").color(egui::Color32::RED));
+                ui.label(egui::RichText::new("AES Cannot be empty").color(egui::Color32::RED).size(10.0));
             }
             // Save PIN to DB & Show Message
             match &self.conn {
@@ -127,7 +128,8 @@ impl App {
         if self.displays.show_invalid_password {
             self.invalid_password(ctx);
         } else {
-            ui.label(RichText::new("Enter PIN").size(12.0));
+            let font_size = if let Some(user) = &self.current_user {user.preferences.font_size} else {12.0};
+            ui.label(RichText::new("Enter PIN").size(font_size));
             ui.horizontal(|ui| {
                 // Limit to 4 characters, only allow digits, single line
                 ui.add(
@@ -183,7 +185,7 @@ impl App {
                             if ui.button("Confirm Delete").clicked() {
                                 match &self.conn {
                                     Some(conn) => {
-                                        println!("DELETING {} FROM DATABASE", &acct_del);
+                                        // println!("DELETING {} FROM DATABASE", &acct_del);
                                         let res = delete_cred(conn, acct_del, user.id);
                                         match res {
                                             Ok(_del) => println!("Success"),
@@ -219,6 +221,7 @@ impl App {
                         cred.description.clone().unwrap_or("".to_string());
                 }
                 if self.displays.show_account_form {
+                    let font_size = if let Some(user)= &self.current_user {user.preferences.font_size} else {12.0};
                     egui::Window::new(self.window_header("New/Edit Credential"))
                         .collapsible(false)
                         .movable(false)
@@ -228,13 +231,13 @@ impl App {
                                 .num_columns(2)
                                 .spacing([8.0, 12.0])
                                 .show(ui, |ui| {
-                                    ui.label("Name");
+                                    ui.label(RichText::new("Name").size(font_size));
                                     ui.text_edit_singleline(&mut self.forms.account_form.name);
                                     ui.end_row();
-                                    ui.label("Password");
+                                    ui.label(RichText::new("Password").size(font_size));
                                     ui.text_edit_singleline(&mut self.forms.account_form.password);
                                     ui.end_row();
-                                    ui.label("Description");
+                                    ui.label(RichText::new("Description").size(font_size));
                                     ui.text_edit_singleline(&mut self.forms.account_form.description);
                                     ui.end_row();
                                 });
@@ -311,16 +314,9 @@ impl App {
             }
         }
     }
-    pub fn settings_form_two(&mut self, ui: &mut egui::Ui) {
+    pub fn settings_form(&mut self, ui: &mut egui::Ui) {
+        let font_size = if let Some(user) = &self.current_user {user.preferences.font_size} else {12.0};
         ui.vertical_centered_justified(|ui| {
-            let mut radio = {
-                if let Some(user) = &self.current_user {
-                    user.preferences.font_family.clone()
-                } else {
-                    FontFamily::Monospace
-                }
-            };
-
             // ui.radio_value(&mut my_enum, Enum::First, "First");
             // ui.checkbox(&mut self.is_checked, "Option Enabled");
             if !self.forms.preferences_form.in_edit
@@ -329,10 +325,11 @@ impl App {
                     self.forms.preferences_form.font_family = user.preferences.font_family.clone();
                     self.forms.preferences_form.color_scheme = user.preferences.color_scheme.clone();
                     self.forms.preferences_form.font_size = user.preferences.font_size;
+                    self.forms.preferences_form.popup_time = user.preferences.popup_time;
                 }
             // Font Family
             ui.horizontal(|ui| {
-                ui.add(Label::new("Font Family"));
+                ui.add(Label::new(RichText::new("Font Family").size(font_size)));
                 ui.horizontal(|ui| {
                     // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
                     // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
@@ -364,7 +361,7 @@ impl App {
             ui.end_row();
             // Color
             ui.horizontal(|ui| {
-                ui.add(Label::new("Color Scheme"));
+                ui.add(Label::new(RichText::new("Color Scheme").size(font_size)));
                 ui.horizontal(|ui| {
                     // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
                     // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
@@ -395,9 +392,9 @@ impl App {
             });
             ui.end_row();
 
-            // Admin Color
+            // Font Size
             ui.horizontal(|ui| {
-                ui.add(Label::new("Font Size"));
+                ui.add(Label::new(RichText::new("Font Size").size(font_size)));
                 ui.horizontal(|ui| {
                     // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
                     // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
@@ -428,6 +425,50 @@ impl App {
             });
             ui.end_row();
 
+            // Popup Time
+            ui.horizontal(|ui| {
+                ui.add(Label::new(RichText::new("Popup Time").size(font_size)));
+                ui.horizontal(|ui| {
+                    // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
+                    // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.popup_time == 5,
+                            "5",
+                        ))
+                        .clicked()
+                    {
+                        println!("Time 5");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.popup_time = 5;
+                    }
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.popup_time == 10,
+                            "10",
+                        ))
+                        .clicked()
+                    {
+                        println!("Time 10");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.popup_time = 10;
+                    }
+                    if ui
+                        .add(egui::RadioButton::new(
+                            self.forms.preferences_form.popup_time == 15,
+                            "15",
+                        ))
+                        .clicked()
+                    {
+                        println!("Time 10");
+                        self.forms.preferences_form.in_edit = true;
+                        self.forms.preferences_form.popup_time = 15;
+                    }
+                    // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
+                });
+            });
+            ui.end_row();
+
             ui.horizontal(|ui| {
                 if ui.button("Submit").clicked() {
                     // Save to DB
@@ -443,7 +484,8 @@ impl App {
                         user_id: user_id,
                         font_family: self.forms.preferences_form.font_family.clone(),
                         color_scheme: self.forms.preferences_form.color_scheme.clone(),
-                        font_size: self.forms.preferences_form.font_size.clone(),
+                        font_size: self.forms.preferences_form.font_size,
+                        popup_time: self.forms.preferences_form.popup_time,
                     }];
                     dbg!(&input_vec);
                     match &self.conn {
@@ -460,6 +502,7 @@ impl App {
                             }
                             // self.accounts.push((self.name_input.clone(), self.password_input.clone()));
                             // self.name_input.clear();
+                            self.forms.preferences_form.in_edit = false;
                         }
                         None => println!("No Conn"),
                     }
@@ -468,113 +511,6 @@ impl App {
                     self.forms.preferences_form.font_family = FontFamily::Monospace;
                     self.forms.preferences_form.color_scheme = ColorScheme::Dark;
                     self.forms.preferences_form.font_size = 12.0;
-                }
-            });
-        });
-    }
-    pub fn edit_account_form(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered_justified(|ui| {
-            let mut radio = {
-                if let Some(user) = &self.current_user {
-                    user.preferences.font_family.clone()
-                } else {
-                    FontFamily::Monospace
-                }
-            };
-
-            // ui.radio_value(&mut my_enum, Enum::First, "First");
-            // ui.checkbox(&mut self.is_checked, "Option Enabled");
-            // Font Family
-            ui.add(Label::new("Font Family"));
-            ui.horizontal(|ui| {
-                // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
-                // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.font_family == FontFamily::Monospace,
-                        "Monospace",
-                    ))
-                    .clicked()
-                {
-                    println!("Mono");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.font_family = FontFamily::Monospace
-                }
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.font_family == FontFamily::Proportional,
-                        "Proportional",
-                    ))
-                    .clicked()
-                {
-                    println!("Proportional");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.font_family = FontFamily::Proportional
-                }
-                // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
-            });
-            ui.end_row();
-            // Color
-            ui.add(Label::new("Color Scheme"));
-            ui.horizontal(|ui| {
-                // ui.radio_value(&mut radio, FontFamily::Monospace, "Monospace");
-                // ui.radio_value(&mut radio, FontFamily::Proportional, "Proportional");
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.color_scheme == ColorScheme::Light,
-                        "Light",
-                    ))
-                    .clicked()
-                {
-                    println!("Mono");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.color_scheme = ColorScheme::Light
-                }
-                if ui
-                    .add(egui::RadioButton::new(
-                        self.forms.preferences_form.color_scheme == ColorScheme::Dark,
-                        "Dark",
-                    ))
-                    .clicked()
-                {
-                    println!("Proportional");
-                    self.forms.preferences_form.in_edit = true;
-                    self.forms.preferences_form.color_scheme = ColorScheme::Dark
-                }
-                // ui.radio_value(radio, FontFamily::Name("serif"), "Custom");
-            });
-            ui.end_row();
-
-            ui.horizontal(|ui| {
-                if ui.button("Submit").clicked() {
-                    // Save to DB
-                    println!("Updating User Preferences");
-                    let user_id = {
-                        if let Some(current_user) = &self.current_user {
-                            current_user.id
-                        } else {
-                            0
-                        }
-                    };
-                    let input_vec = vec![UserPreferenceInput {
-                        user_id: user_id,
-                        font_family: self.forms.preferences_form.font_family.clone(),
-                        color_scheme: self.forms.preferences_form.color_scheme.clone(),
-                        font_size: self.forms.preferences_form.font_size.clone()
-                    }];
-                    dbg!(&input_vec);
-                    match &self.conn {
-                        Some(conn) => {
-                            println!("We have a conn!");
-                            let _ = update_user_preferences(&conn, input_vec);
-                            // self.accounts.push((self.name_input.clone(), self.password_input.clone()));
-                            // self.name_input.clear();
-                        }
-                        None => println!("No Conn"),
-                    }
-                }
-                if ui.button("Clear").clicked() {
-                    self.forms.preferences_form.font_family = FontFamily::Monospace;
                 }
             });
         });

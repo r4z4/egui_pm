@@ -8,6 +8,7 @@ use std::{
 };
 
 use catppuccin_egui::Theme;
+use chrono::Local;
 use eframe::{
     egui::{
         self, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, RichText, TextStyle,
@@ -36,12 +37,14 @@ use is_elevated::is_elevated;
 #[derive(Debug)]
 struct AppStyles {
     window_title_font_size: f32,
+    font_size: f32,
 }
 
 impl Default for AppStyles {
     fn default() -> Self {
         AppStyles {
-            window_title_font_size: 12.0
+            window_title_font_size: 12.0,
+            font_size: 12.0,
         }
     }
 }
@@ -115,8 +118,8 @@ impl eframe::App for App {
             println!("You are running this program as an admin");
             self.admin_menu(ctx); // No bool for this as it just always shows for now
             if self.show_admin_reset_menu {
-                self.admin_setup_menu(ctx);
-            } else if self.show_admin_setup_menu {
+                self.displays.admin_setup_menu(ctx);
+            } else if self.displays.show_admin_setup_menu {
                 self.admin_setup_menu(ctx);
             } else {
                 todo!();
@@ -178,8 +181,8 @@ fn main() -> Result<(), eframe::Error> {
     #[cfg(target_os = "macos")]
     let data_dir = "~/Library/Application Support/aalmp";
     #[cfg(target_os = "linux")]
-    let data_dir = "data";
-    // let data_dir = "~/.local/share/aalmp"; // Or ~/.config/aalmp
+    // let data_dir = "data";
+    let data_dir = "~/.local/share/aalmp"; // Or ~/.config/aalmp
     #[cfg(target_os = "windows")]
     let data_dir = "data"; // %APPDATA% or %LOCALAPPDATA% (e.g., C:\Users\Username\AppData\Roaming\aalmp)
 
@@ -260,6 +263,12 @@ fn set_styles(ctx: &Context, current_user: Option<User>) {
     .into();
     ctx.set_style(style);
     catppuccin_egui::set_theme(&ctx, theme);
+    // TODO Move to impl App so we can use mut self
+    // // Set AppStyles
+    // self.styles = AppStyles {
+    //     font_size: font_size,
+    //     window_title_font_size: 10.0,
+    // }
 }
 
 fn create_env_file(input: String) {
@@ -324,14 +333,15 @@ impl App {
         }
     }
     fn popup_timer(&mut self, ctx: &Context, _ui: &mut egui::Ui) {
+        let time: u64 = if let Some(user) = &self.current_user {user.preferences.popup_time as u64} else {10};
         let str: String = {
             if self.displays.show_credential_popup {
                 if let Some(start_time) = self.displays.popup_start_time {
-                    if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
+                    if Instant::now().duration_since(start_time) >= Duration::from_secs(time) {
                         "Times up!".to_string()
                     } else {
                         let remaining =
-                            Duration::from_secs(10) - Instant::now().duration_since(start_time);
+                            Duration::from_secs(time) - Instant::now().duration_since(start_time);
                         format!("Remaining: {}", remaining.as_secs())
                     }
                 } else {
@@ -432,8 +442,9 @@ impl App {
             .movable(false)
             .show(ctx, |ui| {
                 ui.label(RichText::new("Preferences").size(14.0));
-                App::settings_form_two(self, ui);
+                App::settings_form(self, ui);
                 if ui.button("Cancel").clicked() {
+                    self.forms.preferences_form.in_edit = false;
                     self.displays.show_preferences_dialog = false; // Close dialog
                 }
             });
@@ -492,16 +503,18 @@ impl App {
         }
     }
     fn credential_popup(&mut self, ctx: &Context, pw_str: String, cred: &Credential) {
-        egui::Window::new("Temporary Access: 10 seconds")
+        let time: u64 = if let Some(user) = &self.current_user {user.preferences.popup_time as u64} else {10};
+        egui::Window::new(format!("Temporary Access: {} seconds", time))
             .collapsible(false)
             .movable(false)
             .show(ctx, |ui| {
                 ui.collapsing("Details", |ui| {
+                    let dt_local = cred.details.updated_at.with_timezone(&Local);
                     if let Some(desc) = &cred.description {
-                        ui.label(RichText::new(desc).size(10.0))
+                        ui.label(RichText::new(format!("Desc: {}", desc)).size(10.0))
                             .on_hover_cursor(egui::CursorIcon::Text);
                     }
-                    ui.label(RichText::new(cred.details.updated_at.to_string()).size(10.0));
+                    ui.label(RichText::new(format!("Updated: {}", dt_local.format("%Y/%m/%d %H:%M"))).size(10.0));
                 });                
                 ui.label(RichText::new(format!("Username: {}", cred.name.clone())).size(14.0))
                     .on_hover_cursor(egui::CursorIcon::Text);
@@ -517,7 +530,7 @@ impl App {
                 }
             });
         if let Some(start_time) = self.displays.popup_start_time {
-            if Instant::now().duration_since(start_time) >= Duration::from_secs(10) {
+            if Instant::now().duration_since(start_time) >= Duration::from_secs(time) {
                 println!("Setting popups to false");
                 self.displays.show_credential_popup = false;
                 self.displays.popup_start_time = None; // Reset timer

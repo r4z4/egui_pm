@@ -37,6 +37,7 @@ pub struct UserPreferenceInput {
     pub font_family: FontFamily,
     pub color_scheme: ColorScheme,
     pub font_size: f32,
+    pub popup_time: i8,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,6 +46,7 @@ pub struct UserPreference {
     pub font_family: FontFamily,
     pub color_scheme: ColorScheme,
     pub font_size: f32,
+    pub popup_time: i8,
 }
 
 #[derive(Clone, Debug)]

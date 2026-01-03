@@ -49,6 +49,7 @@ pub fn create_db(conn: &Connection) -> Result<(), rusqlite::Error> {
           font_family TEXT NOT NULL DEFAULT 'monospace',
           color_scheme_id INTEGER REFERENCES color_scheme(id) NOT NULL DEFAULT 1, -- Light
           font_size INTEGER NOT NULL DEFAULT 12,
+          popup_time INTEGER NOT NULL DEFAULT 10,
           updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP
         ) STRICT",
@@ -216,13 +217,15 @@ pub fn update_user_preferences(conn: &Arc<Mutex<Connection>>, input_vec: Vec<Use
         dbg!(&input);
         let font_family_input = map_font_family(&input.font_family);
         let color_scheme_id = map_color_scheme(&input.color_scheme);
+        let font_size = &input.font_size;
+        let popup_time = &input.popup_time;
         println!("Updating Color Scheme to {}", &color_scheme_id);
         // let org_id = if idx % 2 == 0 { Some(org_id) } else { None };
         let res = conn.execute(
             "UPDATE user_setting 
-             SET font_family = ?1, color_scheme_id = ?2, updated_at = ?3 
-             WHERE user_id = ?4",
-            (font_family_input, color_scheme_id, now, &input.user_id),
+             SET font_family = ?1, color_scheme_id = ?2, font_size = ?3, popup_time = ?4, updated_at = ?5 
+             WHERE user_id = ?6",
+            (font_family_input, color_scheme_id, font_size, popup_time, now, &input.user_id),
         );
         match res {
             Ok (res) => println!("{}", res),
@@ -234,7 +237,7 @@ pub fn update_user_preferences(conn: &Arc<Mutex<Connection>>, input_vec: Vec<Use
 
 pub fn user_from_id(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User, Box<dyn std::error::Error>> {
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family, user_setting.color_scheme_id 
+    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family, user_setting.color_scheme_id, user_setting.font_size, user_setting.popup_time 
                     FROM user
                     INNER JOIN user_setting ON user_setting.user_id = user.id
                     WHERE user.id = :user_id LIMIT 1";
@@ -246,7 +249,7 @@ pub fn user_from_id(conn: &Arc<Mutex<Connection>>, user_id: i32) -> Result<User,
             id: row.get(0)?,
             username: row.get(1)?,
             pin: row.get(2)?,
-            preferences: build_user_preference(row.get(3)?, row.get(4)?),
+            preferences: build_user_preference(row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?),
         };
         Ok(user)
     } else {
@@ -349,7 +352,7 @@ pub fn get_current_accounts(conn: Arc<Mutex<Connection>>) -> Result<Vec<Account>
 
 pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusqlite::Error> { 
     let conn = conn.lock().unwrap();
-    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family, user_setting.color_scheme_id
+    let select_sql = "SELECT user.id, user.username, user.pin, user_setting.font_family, user_setting.color_scheme_id, user_setting.font_size, user_setting.popup_time
                     FROM user
                     INNER JOIN user_setting ON user_setting.user_id = user.id
                     ORDER BY user.id ASC";
@@ -360,7 +363,7 @@ pub fn get_current_users(conn: Arc<Mutex<Connection>>) -> Result<Vec<User>, rusq
     match rows {
         Ok(mut rows) => {
             while let Some(row) = rows.next()? {
-                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?, preferences: build_user_preference(row.get(3)?, row.get(4)?)};
+                let user =  User {id: row.get(0)?, username: row.get(1)?, pin: row.get(2)?, preferences: build_user_preference(row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)};
                 dbg!(&user);
                 users.push(user);
             }
@@ -381,9 +384,14 @@ fn get_color_scheme(id: i32) -> ColorScheme {
     }
 }
 
-fn build_user_preference(db_name: String, color_scheme_id: i32) -> UserPreference {
+fn build_user_preference(db_name: String, color_scheme_id: i32, font_size: f32, popup_time: i8) -> UserPreference {
     dbg!(&color_scheme_id);
-    let up = UserPreference {font_family: get_font_family(&db_name), color_scheme: get_color_scheme(color_scheme_id), font_size: 12.0};
+    let up = UserPreference {
+        font_family: get_font_family(&db_name), 
+        color_scheme: get_color_scheme(color_scheme_id), 
+        font_size: font_size, 
+        popup_time: popup_time,
+    };
     up
 }
 

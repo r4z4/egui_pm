@@ -163,6 +163,19 @@ impl eframe::App for App {
 //     fs::read_to_string("./init.sql")
 // }
 //
+//
+fn build_mac_path() -> PathBuf {
+    match env::home_dir() {
+        Some(mut path) => {
+            path.push("Library");
+            path.push("Application Support");
+            path
+        },
+        None => {
+            PathBuf::from("~")
+       }
+    }
+}
 fn build_linux_path() -> PathBuf {
     let mut data_dir = PathBuf::from(env::var("HOME").unwrap_or("".to_string()));
     data_dir.push(".local");
@@ -183,7 +196,7 @@ fn main() -> Result<(), eframe::Error> {
     dotenv().ok();
     // let conn = Connection::open(DB_PATH).unwrap();
     #[cfg(target_os = "macos")]
-    let data_dir = "~/Library/Application Support";
+    let data_dir = build_mac_path();
     #[cfg(target_os = "linux")]
     let data_dir = build_linux_path(); // Will mutate data_dir
     // let data_dir = "~/.local/share"; // Or ~/.config/aalmp
